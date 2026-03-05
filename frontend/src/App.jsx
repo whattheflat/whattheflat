@@ -16,7 +16,7 @@ const KEY_VOTE_THRESHOLD = 9   // out of 12 — very stable
 
 // Chord detection tuning
 const CHROMA_SMOOTH        = 12   // frames to average (~200ms at 60fps)
-const CHORD_VOTE_THRESHOLD = 4    // consecutive identical detections required
+const CHORD_VOTE_THRESHOLD = 3    // consecutive identical detections required
 
 export default function App() {
   // ── Listening state ──────────────────────────────────────────────────────

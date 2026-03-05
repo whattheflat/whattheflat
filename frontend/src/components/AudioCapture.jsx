@@ -26,7 +26,7 @@ import { NOTES } from '../lib/theory'
 
 const PITCH_FFT  = 4096    // ~90ms window — good temporal resolution for pitch
 const CHORD_FFT  = 16384   // ~370ms window — 2.7 Hz/bin, separates low semitones
-const MIN_CLARITY = 0.85
+const MIN_CLARITY = 0.80
 const MIN_VOLUME  = 0.01
 const NOISE_FLOOR = -65    // dB
 
@@ -44,7 +44,7 @@ function computeChroma(freqData, sampleRate, fftSize) {
 
   for (let bin = 2; bin < N; bin++) {
     const freq = bin * binHz
-    if (freq < 80 || freq > 2000) continue
+    if (freq < 80 || freq > 4000) continue
     const db = freqData[bin]
     if (db < NOISE_FLOOR) continue
 
