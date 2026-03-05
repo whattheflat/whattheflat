@@ -116,6 +116,31 @@ function noteIndex(note) {
 // ─── Key Detection ───────────────────────────────────────────────────────────
 
 /**
+ * detectTopKeys(noteHistory, n) → top N key candidates sorted by confidence.
+ * Each entry: { root, mode, confidence }
+ */
+export function detectTopKeys(noteHistory, n = 3) {
+  if (!noteHistory || noteHistory.length < 8) return []
+
+  const freq = new Array(12).fill(0)
+  for (const note of noteHistory) freq[((note % 12) + 12) % 12]++
+
+  const candidates = []
+  for (let root = 0; root < 12; root++) {
+    const rotated  = Array.from({ length: 12 }, (_, i) => freq[(i + root) % 12])
+    const scoreMaj = pearsonCorrelation(rotated, KS_MAJOR)
+    const scoreMin = pearsonCorrelation(rotated, KS_MINOR)
+    candidates.push({ root: noteName(root), mode: 'major', score: scoreMaj,
+      confidence: Math.max(0, Math.min(1, (scoreMaj + 1) / 2)) })
+    candidates.push({ root: noteName(root), mode: 'minor', score: scoreMin,
+      confidence: Math.max(0, Math.min(1, (scoreMin + 1) / 2)) })
+  }
+
+  return candidates.sort((a, b) => b.score - a.score).slice(0, n)
+    .map(({ root, mode, confidence }) => ({ root, mode, confidence }))
+}
+
+/**
  * detectKey(noteHistory) → { root, mode, confidence }
  * Uses Krumhansl-Schmuckler: correlates pitch-class histogram with key profiles.
  * noteHistory: array of MIDI note numbers or pitch-class integers (0–11)

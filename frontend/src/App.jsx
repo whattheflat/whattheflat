@@ -6,8 +6,7 @@ import ChordDisplay from './components/ChordDisplay'
 import SafeNotes from './components/SafeNotes'
 import Fretboard from './components/Fretboard'
 import ProgressionSuggestions from './components/ProgressionSuggestions'
-import ChatAssistant from './components/ChatAssistant'
-import { NOTES, detectKey, matchChordFromChroma, detectRepeatingProgression } from './lib/theory'
+import { NOTES, detectKey, detectTopKeys, matchChordFromChroma, detectRepeatingProgression } from './lib/theory'
 
 // Key detection tuning
 const NOTE_HISTORY_SIZE  = 80
@@ -33,12 +32,16 @@ export default function App() {
 
   // Effective key used by all components
   const effectiveKey = lockedKey ?? keyInfo
-  // Locked key = only match diatonic chords regardless of mode — far fewer candidates
-  const isStrictMode = lockedKey !== null
+  // Beginner + locked key = only match the 7 diatonic chords (simpler, fewer false positives)
+  // Advanced + locked key = allow borrowed/chromatic chords like D7 in Am
+  const isStrictMode = appMode === 'beginner' && lockedKey !== null
 
   // ── Chord state ───────────────────────────────────────────────────────────
-  const [chordHistory, setChordHistory]             = useState([])
+  const [chordHistory, setChordHistory]               = useState([])
   const [detectedProgression, setDetectedProgression] = useState(null)
+
+  // ── Top key candidates (shown as quick-lock chips) ────────────────────────
+  const [topKeyCandidates, setTopKeyCandidates] = useState([])
 
   // ── Internal refs ─────────────────────────────────────────────────────────
   const noteHistoryRef  = useRef([])
@@ -68,6 +71,15 @@ export default function App() {
     setDetectedProgression(null)
   }
 
+  function quickLock({ root, mode, confidence }) {
+    const info = { root, mode, confidence }
+    setLockedKey(info)
+    effectiveKeyRef.current = info
+    chordVotesRef.current = []
+    setChordHistory([])
+    setDetectedProgression(null)
+  }
+
   function removeLock() {
     setLockedKey(null)
     effectiveKeyRef.current = keyInfo
@@ -82,6 +94,7 @@ export default function App() {
     if (history.length % 5 !== 0) return
 
     const result = detectKey(history)
+    setTopKeyCandidates(detectTopKeys(history))
     if (result.confidence < 0.5) return
 
     const votes = keyVotesRef.current
@@ -199,7 +212,25 @@ export default function App() {
             </button>
           </div>
         ) : (
-          <div className="flex gap-2 items-center">
+          <div className="flex flex-wrap gap-2 items-center">
+            {/* Top 3 detected key candidates — click to lock */}
+            {topKeyCandidates.map((k, i) => (
+              <button
+                key={i}
+                onClick={() => quickLock(k)}
+                className={`px-3 py-1 rounded-full text-sm font-semibold border transition-all ${
+                  i === 0
+                    ? 'border-accent text-accent hover:bg-accent/10'
+                    : 'border-border text-gray-400 hover:border-gray-400 hover:text-gray-200'
+                }`}
+              >
+                {k.root} {k.mode === 'major' ? 'maj' : 'min'} · {Math.round(k.confidence * 100)}%
+              </button>
+            ))}
+            {topKeyCandidates.length > 0 && (
+              <span className="text-gray-600 text-xs">or</span>
+            )}
+            {/* Manual override */}
             <select
               value={lockRoot}
               onChange={e => setLockRoot(e.target.value)}
@@ -219,16 +250,9 @@ export default function App() {
               onClick={applyLock}
               className="px-3 py-1 bg-border hover:bg-accent/20 border border-border hover:border-accent text-sm rounded-lg transition-all"
             >
-              Lock Key
+              Lock
             </button>
           </div>
-        )}
-
-        {/* Auto-detected key badge (advanced mode) */}
-        {appMode === 'advanced' && keyInfo && !lockedKey && (
-          <span className="text-xs text-gray-500">
-            auto: {keyInfo.root} {keyInfo.mode} ({Math.round(keyInfo.confidence * 100)}%)
-          </span>
         )}
       </div>
 
@@ -253,9 +277,6 @@ export default function App() {
             currentChord={currentChord}
             pentatonicOnly={appMode === 'beginner'}
           />
-        </div>
-        <div className="md:col-span-2">
-          <ChatAssistant keyInfo={effectiveKey} currentChord={currentChord} />
         </div>
       </div>
     </div>

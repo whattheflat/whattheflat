@@ -3,10 +3,11 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  base: './',   // relative paths so Electron can load files from disk
   server: {
     port: 5173,
-    proxy: {
-      '/api': 'http://localhost:8000',
-    },
+  },
+  build: {
+    outDir: 'dist',
   },
 })
