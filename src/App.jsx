@@ -7,6 +7,7 @@ import SafeNotes from './components/SafeNotes'
 import Fretboard from './components/Fretboard'
 import ProgressionSuggestions from './components/ProgressionSuggestions'
 import ChatAssistant from './components/ChatAssistant'
+import Tuner from './components/Tuner'
 import { NOTES, detectKey, matchChordFromChroma, detectRepeatingProgression } from './lib/theory'
 
 // Key detection tuning
@@ -255,8 +256,11 @@ export default function App() {
           />
         </div>
         <div className="md:col-span-2">
-          <ChatAssistant keyInfo={effectiveKey} currentChord={currentChord} />
+          <Tuner />
         </div>
+        {/* <div className="md:col-span-2">
+          <ChatAssistant keyInfo={effectiveKey} currentChord={currentChord} />
+        </div> */}
       </div>
     </div>
   )
