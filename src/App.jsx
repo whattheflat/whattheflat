@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import AudioCapture from './components/AudioCapture'
 import ProgressionBanner from './components/ProgressionBanner'
+import ProgressionSuggestions from './components/ProgressionSuggestions'
 import Fretboard from './components/Fretboard'
 import Tuner from './components/Tuner'
 import Piano from './components/Piano'
@@ -24,6 +25,10 @@ export default function App() {
   // ── Instrument view + tuner ───────────────────────────────────────────────
   const [instrument, setInstrument] = useState('guitar')  // 'guitar' | 'piano'
   const [showTuner, setShowTuner]   = useState(false)
+
+  // ── BPM estimation from chord-change intervals ────────────────────────────
+  const [bpm, setBpm]               = useState(null)
+  const chordTimestampsRef          = useRef([])
 
   // ── Key: auto-detected + optional lock ───────────────────────────────────
   const [keyInfo, setKeyInfo]     = useState(null)     // auto-detected
@@ -77,12 +82,14 @@ export default function App() {
     pendingKeyRef.current    = null
     chromaIdxRef.current     = 0
     chromaRingRef.current    = Array.from({ length: CHROMA_SMOOTH }, () => new Float32Array(12))
+    chordTimestampsRef.current = []
     setKeyInfo(null)
     setLockedKey(null)
     effectiveKeyRef.current  = null
     setChordHistory([])
     setDetectedProgression(null)
     setTopKeyCandidates([])
+    setBpm(null)
   }
 
   // ── Key lock handlers ─────────────────────────────────────────────────────
@@ -184,6 +191,22 @@ export default function App() {
         if (prev[prev.length - 1] === winner) return prev
         return [...prev.slice(-30), winner]
       })
+
+      // BPM: track chord commit timestamps and estimate tempo
+      const now = performance.now()
+      const ts = chordTimestampsRef.current
+      ts.push(now)
+      if (ts.length > 8) ts.shift()
+      if (ts.length >= 3) {
+        const intervals = []
+        for (let i = 1; i < ts.length; i++) intervals.push(ts[i] - ts[i - 1])
+        const avg = intervals.reduce((a, b) => a + b) / intervals.length
+        let estimated = Math.round(60000 / avg)
+        // Chord changes are often every 2 beats — normalise to 55–220 BPM range
+        while (estimated < 55)  estimated *= 2
+        while (estimated > 220) estimated /= 2
+        setBpm(estimated)
+      }
 
       // Inject chord tones into note history with boost weight so key detection
       // anchors to confirmed chords rather than transient melody notes
@@ -292,11 +315,13 @@ export default function App() {
         keyInfo={effectiveKey}
         detectedProgression={detectedProgression}
         currentChord={currentChord}
+        bpm={bpm}
       />
 
-      {/* ── Instrument view — select in header ── */}
-      <div className="flex flex-col gap-3">
-        <div>
+      {/* ── Instrument + progressions row ── */}
+      <div className="flex gap-3 mb-3">
+        {/* Left: fretboard / piano */}
+        <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between mb-1 px-1">
             <span className="text-xs text-gray-500 uppercase tracking-widest">Instrument</span>
             <select
@@ -314,17 +339,22 @@ export default function App() {
           }
         </div>
 
-        {/* ── Tuner — collapsible ── */}
-        <div>
-          <button
-            onClick={() => setShowTuner(v => !v)}
-            className="w-full flex items-center justify-between px-4 py-2 bg-panel border border-border rounded-xl text-sm text-gray-400 hover:text-gray-200 hover:border-gray-500 transition-all"
-          >
-            <span>Tuner</span>
-            <span>{showTuner ? '▲' : '▼'}</span>
-          </button>
-          {showTuner && <div className="mt-2"><Tuner /></div>}
+        {/* Right: genre progression suggestions */}
+        <div className="w-56 shrink-0">
+          <ProgressionSuggestions keyInfo={effectiveKey} />
         </div>
+      </div>
+
+      {/* ── Tuner — collapsible ── */}
+      <div>
+        <button
+          onClick={() => setShowTuner(v => !v)}
+          className="w-full flex items-center justify-between px-4 py-2 bg-panel border border-border rounded-xl text-sm text-gray-400 hover:text-gray-200 hover:border-gray-500 transition-all"
+        >
+          <span>Tuner</span>
+          <span>{showTuner ? '▲' : '▼'}</span>
+        </button>
+        {showTuner && <div className="mt-2"><Tuner /></div>}
       </div>
     </div>
   )
