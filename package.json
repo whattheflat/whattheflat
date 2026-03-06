@@ -52,7 +52,7 @@
     },
     "mac": {
       "target": "dmg",
-      "icon": "assets/whattheflat-logo.png"
+      "icon": "assets/whattheflat-logo-mac.png"
     },
     "linux": {
       "target": "AppImage",
