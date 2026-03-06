@@ -24,10 +24,8 @@ import { NOTES } from '../lib/theory'
 // by simply using a much larger FFT window.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const PITCH_FFT  = 4096    // ~90ms window — good temporal resolution for pitch
-const CHORD_FFT  = 16384   // ~370ms window — 2.7 Hz/bin, separates low semitones
-const MIN_CLARITY = 0.80
-const MIN_VOLUME  = 0.01
+const PITCH_FFT   = 4096    // ~90ms window — good temporal resolution for pitch
+const CHORD_FFT   = 16384   // ~370ms window — 2.7 Hz/bin, separates low semitones
 const NOISE_FLOOR = -65    // dB
 
 // ─── Harmonic summation chroma ────────────────────────────────────────────────
@@ -83,27 +81,45 @@ function detectBassPC(freqData, sampleRate, fftSize) {
   return ((bestMidi % 12) + 12) % 12
 }
 
-export default function AudioCapture({ onNote, onChroma, isListening }) {
-  const audioCtxRef    = useRef(null)
-  const pitchAnalyser  = useRef(null)
-  const chordAnalyser  = useRef(null)
-  const timeBufRef     = useRef(null)
-  const freqBufRef     = useRef(null)
-  const detectorRef    = useRef(null)
-  const rafRef         = useRef(null)
-  const streamRef      = useRef(null)
+export default function AudioCapture({ onNote, onChroma, isListening, minClarity = 0.80, minVolume = 0.01, onPermissionError }) {
+  const audioCtxRef   = useRef(null)
+  const timeBufRef    = useRef(null)
+  const freqBufRef    = useRef(null)
+  const detectorRef   = useRef(null)
+  const rafRef        = useRef(null)
+  const streamRef     = useRef(null)
+  const activeRef     = useRef(false)   // guards against stale tick callbacks
+
+  // All callbacks and thresholds read via refs — so start/stop never need to recreate
+  const onNoteRef            = useRef(onNote)
+  const onChromaRef          = useRef(onChroma)
+  const onPermissionErrorRef = useRef(onPermissionError)
+  const minClarityRef        = useRef(minClarity)
+  const minVolumeRef         = useRef(minVolume)
+  useEffect(() => { onNoteRef.current            = onNote            }, [onNote])
+  useEffect(() => { onChromaRef.current          = onChroma          }, [onChroma])
+  useEffect(() => { onPermissionErrorRef.current = onPermissionError }, [onPermissionError])
+  useEffect(() => { minClarityRef.current        = minClarity        }, [minClarity])
+  useEffect(() => { minVolumeRef.current         = minVolume         }, [minVolume])
 
   const stop = useCallback(() => {
-    if (rafRef.current)      cancelAnimationFrame(rafRef.current)
-    if (streamRef.current)   streamRef.current.getTracks().forEach(t => t.stop())
-    if (audioCtxRef.current) audioCtxRef.current.close()
-    audioCtxRef.current = null
+    activeRef.current = false
+    if (rafRef.current)    { cancelAnimationFrame(rafRef.current); rafRef.current = null }
+    if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null }
+    if (audioCtxRef.current) { audioCtxRef.current.close(); audioCtxRef.current = null }
   }, [])
 
   const start = useCallback(async () => {
     stop()
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    let stream
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    } catch (err) {
+      onPermissionErrorRef.current?.(err)
+      return
+    }
     streamRef.current = stream
+    activeRef.current = true
 
     const ctx = new AudioContext()
     audioCtxRef.current = ctx
@@ -112,8 +128,7 @@ export default function AudioCapture({ onNote, onChroma, isListening }) {
     // Small analyser — pitch detection needs fast time-domain data
     const pa = ctx.createAnalyser()
     pa.fftSize = PITCH_FFT
-    pa.smoothingTimeConstant = 0.0   // no smoothing: pitchy needs clean waveform
-    pitchAnalyser.current = pa
+    pa.smoothingTimeConstant = 0.0
     source.connect(pa)
     timeBufRef.current = new Float32Array(pa.fftSize)
     detectorRef.current = PitchDetector.forFloat32Array(pa.fftSize)
@@ -121,30 +136,29 @@ export default function AudioCapture({ onNote, onChroma, isListening }) {
     // Large analyser — chord detection needs fine frequency resolution
     const ca = ctx.createAnalyser()
     ca.fftSize = CHORD_FFT
-    ca.smoothingTimeConstant = 0.65  // smooth over time for stable chord reading
-    chordAnalyser.current = ca
+    ca.smoothingTimeConstant = 0.65
     source.connect(ca)
     freqBufRef.current = new Float32Array(ca.frequencyBinCount)
 
     function tick() {
+      if (!activeRef.current) return   // stop() was called — bail immediately
+
       const timeBuf = timeBufRef.current
       pa.getFloatTimeDomainData(timeBuf)
 
       const rms = Math.sqrt(timeBuf.reduce((s, v) => s + v * v, 0) / timeBuf.length)
-      if (rms >= MIN_VOLUME) {
-        // Pitch via McLeod (autocorrelation) — unaffected by FFT bin size
+      if (rms >= minVolumeRef.current) {
         const [freq, clarity] = detectorRef.current.findPitch(timeBuf, ctx.sampleRate)
-        if (clarity >= MIN_CLARITY && freq > 60 && freq < 4200) {
+        if (clarity >= minClarityRef.current && freq > 60 && freq < 4200) {
           const midi       = Math.round(12 * Math.log2(freq / 440) + 69)
           const pitchClass = ((midi % 12) + 12) % 12
-          onNote({ noteName: NOTES[pitchClass], pitchClass, freq, midi, clarity })
+          onNoteRef.current({ noteName: NOTES[pitchClass], pitchClass, freq, midi, clarity })
         }
 
-        // Chord chroma from the high-resolution FFT
-        if (onChroma) {
+        if (onChromaRef.current) {
           const freqBuf = freqBufRef.current
           ca.getFloatFrequencyData(freqBuf)
-          onChroma(
+          onChromaRef.current(
             computeChroma(freqBuf, ctx.sampleRate, ca.fftSize),
             detectBassPC(freqBuf, ctx.sampleRate, ca.fftSize)
           )
@@ -154,7 +168,7 @@ export default function AudioCapture({ onNote, onChroma, isListening }) {
       rafRef.current = requestAnimationFrame(tick)
     }
     tick()
-  }, [onNote, onChroma, stop])
+  }, [stop])
 
   useEffect(() => {
     if (isListening) start().catch(console.error)

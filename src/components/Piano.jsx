@@ -29,8 +29,8 @@ const LABEL_Y    = KEY_H - 10 // y of note label on white key
 const BLACK_LABEL_Y = BLACK_H - 8
 
 function keyColor(isChordTone, isScale, isBlack) {
-  if (isChordTone) return { fill: '#f59e0b', text: '#000' }
-  if (isScale)     return { fill: '#a855f7', text: '#fff' }
+  if (isChordTone) return { fill: '#a855f7', text: '#fff' }
+  if (isScale)     return { fill: '#f59e0b', text: '#000' }
   return isBlack
     ? { fill: '#1f1f1f', text: '#6b7280' }
     : { fill: '#f5f5f5', text: '#6b7280' }
@@ -56,8 +56,8 @@ export default function Piano({ keyInfo, currentChord }) {
         {currentChord && <span className="text-amber-400 ml-2">/ {currentChord}</span>}
       </p>
 
-      <div className="overflow-x-auto">
-        <svg width={svgW} height={svgH} style={{ display: 'block', minWidth: svgW }}>
+      <div>
+        <svg viewBox={`0 0 ${svgW} ${svgH}`} width="100%" height="auto" style={{ display: 'block' }}>
 
           {/* White keys */}
           {Array.from({ length: OCTAVES }, (_, oct) =>
@@ -125,7 +125,7 @@ export default function Piano({ keyInfo, currentChord }) {
       </div>
 
       <div className="mt-3 flex gap-5 text-xs text-gray-500">
-        <span><span className="text-amber-400">●</span> Chord tone</span>
+        <span><span className="text-accent">●</span> Chord tone</span>
         <span><span className="text-accent">●</span> Scale note</span>
       </div>
     </div>

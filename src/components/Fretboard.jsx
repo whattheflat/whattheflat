@@ -31,8 +31,8 @@ const fretX = f => NUT_X + (f - 0.5) * FRET_W
 const stringY = si => PAD_T + si * STRING_H
 
 function noteColor(isChordTone, isPenta, isScale) {
-  if (isChordTone) return { fill: '#f59e0b', text: '#000' }   // amber
-  if (isPenta)     return { fill: '#a855f7', text: '#fff' }   // purple
+  if (isChordTone) return { fill: '#a855f7', text: '#fff' }   // purple
+  if (isPenta)     return { fill: '#f59e0b', text: '#000' }   // amber
   if (isScale)     return { fill: '#374151', text: '#d1d5db' } // grey
   return null
 }
@@ -57,11 +57,12 @@ export default function Fretboard({ keyInfo, currentChord, pentatonicOnly = fals
         {currentChord && <span className="text-amber-400 ml-2">/ {currentChord}</span>}
       </p>
 
-      <div className="overflow-x-auto">
+      <div>
         <svg
-          width={BOARD_W}
-          height={BOARD_H}
-          style={{ display: 'block', minWidth: BOARD_W }}
+          viewBox={`0 0 ${BOARD_W} ${BOARD_H}`}
+          width="100%"
+          height="auto"
+          style={{ display: 'block' }}
         >
           {/* Fretboard background */}
           <rect x={NUT_X} y={PAD_T - 6} width={BOARD_W - NUT_X - 4} height={5 * STRING_H + 12}
@@ -145,8 +146,8 @@ export default function Fretboard({ keyInfo, currentChord, pentatonicOnly = fals
       </div>
 
       <div className="mt-3 flex gap-5 text-xs text-gray-500">
-        <span><span className="text-amber-400">●</span> Chord tone</span>
-        <span><span className="text-accent">●</span> Pentatonic</span>
+        <span><span className="text-accent">●</span> Chord tone</span>
+        <span><span className="text-amber-400">●</span> Pentatonic</span>
         <span><span className="text-gray-500">●</span> Scale</span>
       </div>
     </div>

@@ -17,7 +17,7 @@ function findLoopPosition(chordHistory, progression) {
   return progression.indexOf(last)
 }
 
-export default function ProgressionBanner({ chordHistory, keyInfo, detectedProgression, currentChord, bpm }) {
+export default function ProgressionBanner({ chordHistory, keyInfo, detectedProgression, currentChord }) {
   const { root, mode, confidence } = keyInfo ?? {}
 
   const visible = chordHistory.slice(-HISTORY_SHOWN)
@@ -41,7 +41,7 @@ export default function ProgressionBanner({ chordHistory, keyInfo, detectedProgr
     <div className="bg-panel border border-border rounded-2xl p-4 mb-3 flex gap-4">
 
       {/* ── Left: key + chord history + loop ── */}
-      <div className="flex-1 min-w-0 flex flex-col gap-2">
+      <div className="w-full lg:w-[70%] min-w-0 flex flex-col gap-2">
 
         {/* Key + history on one row */}
         <div className="flex items-end gap-3">
@@ -127,20 +127,15 @@ export default function ProgressionBanner({ chordHistory, keyInfo, detectedProgr
       </div>
 
       {/* ── Divider ── */}
-      <div className="w-px bg-border shrink-0" />
+      <div className="hidden lg:block w-px bg-border shrink-0" />
 
-      {/* ── Right: big chord + BPM ── */}
-      <div className="w-36 shrink-0 flex flex-col items-center justify-center gap-1">
+      {/* ── Right: big chord ── */}
+      <div className="hidden lg:flex w-[30%] flex-col items-center justify-center gap-1">
         {current ? (
           <>
+            <p className="text-xs text-gray-600 uppercase tracking-widest">Now Playing</p>
             <div className="text-6xl font-black text-amber-400 leading-none">{current}</div>
             <div className="text-sm text-gray-500">{currentRN}</div>
-            {bpm && (
-              <div className="mt-2 text-center">
-                <div className="text-2xl font-bold text-gray-300">{bpm}</div>
-                <div className="text-xs text-gray-600 uppercase tracking-widest">BPM ~</div>
-              </div>
-            )}
           </>
         ) : (
           <p className="text-gray-600 text-xs text-center">Play a chord</p>

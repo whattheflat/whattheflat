@@ -7,9 +7,10 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 1280,
     height: 900,
-    minWidth: 900,
+    minWidth: 620,
     minHeight: 600,
     title: 'WhatTheFlat',
+    icon: path.join(__dirname, '../assets/whattheflat-logo.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

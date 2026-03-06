@@ -5,63 +5,106 @@ import ProgressionSuggestions from './components/ProgressionSuggestions'
 import Fretboard from './components/Fretboard'
 import Tuner from './components/Tuner'
 import Piano from './components/Piano'
-import { NOTES, detectKey, detectTopKeys, matchChordFromChroma, detectRepeatingProgression, getChordTones } from './lib/theory'
+import Settings from './components/Settings'
+import DebugView from './components/DebugView'
+import { NOTES, detectKey, detectTopKeys, matchChordFromChroma, detectRepeatingProgression, getChordTones, getChordCandidates, getNoteHistoryAnalysis } from './lib/theory'
+import settingIcon from './assets/setting-icon.png'
+import viewIcon from './assets/view.png'
 
-// Key detection tuning
-const NOTE_HISTORY_SIZE  = 160   // larger = chord boosts dominate over melody runs
-const KEY_VOTE_WINDOW    = 12
-const KEY_VOTE_THRESHOLD = 9     // out of 12
-const CHORD_NOTE_BOOST   = 3     // confirmed chord tones injected N× into note history
-
-// Chord detection tuning
-const CHROMA_SMOOTH        = 8    // frames to average — more responsive
-const CHORD_VOTE_THRESHOLD = 2    // consecutive identical detections required
-const CHORD_MIN_SCORE      = 0.38 // lower = more chord types detected
+const DEFAULTS = {
+  // Key detection
+  noteHistorySize:    12000, // ~whole session until New Song
+  keyVoteWindow:      40,    // larger window → needs sustained evidence to shift
+  keyVoteThreshold:   32,    // 80% of window must agree
+  chordNoteBoost:     3,
+  // Chord detection
+  chromaSmooth:       14,   // more frames averaged → transient chords invisible
+  chordVoteThreshold: 4,    // 4 consecutive identical reads → ~600ms sustained
+  chordMinScore:      0.40, // slightly stricter match quality
+  // Audio input
+  minClarity:         0.80,
+  minVolume:          0.01,
+}
 
 export default function App() {
-  // ── Listening state ──────────────────────────────────────────────────────
+  // ── Config ───────────────────────────────────────────────────────────────────
+  const [config, setConfig] = useState(DEFAULTS)
+  const configRef = useRef(DEFAULTS)
+  useEffect(() => { configRef.current = config }, [config])
+
+  const [showSettings, setShowSettings] = useState(false)
+
+  function updateConfig(key, val) {
+    setConfig(prev => ({ ...prev, [key]: val }))
+  }
+
+  // ── Listening state ──────────────────────────────────────────────────────────
   const [isListening, setIsListening] = useState(false)
 
-  // ── Instrument view + tuner ───────────────────────────────────────────────
+  // ── Instrument view + tuner ───────────────────────────────────────────────────
   const [instrument, setInstrument] = useState('guitar')  // 'guitar' | 'piano'
   const [showTuner, setShowTuner]   = useState(false)
+  const [showDebug, setShowDebug]   = useState(false)
 
-  // ── BPM estimation from chord-change intervals ────────────────────────────
+  // ── Mic permission error ──────────────────────────────────────────────────────
+  const [micError, setMicError] = useState(null)
+
+  // ── Debug data ────────────────────────────────────────────────────────────────
+  const [debugChroma,       setDebugChroma]       = useState(null)
+  const [debugCandidates,   setDebugCandidates]   = useState([])
+  const [debugNoteAnalysis, setDebugNoteAnalysis] = useState(null)
+
+  // ── Stable refs for values used inside callbacks ──────────────────────────────
+  const showDebugRef  = useRef(showDebug)
+  const lockedKeyRef  = useRef(null)
+  useEffect(() => { showDebugRef.current = showDebug }, [showDebug])
+
+  // ── BPM estimation from chord-change intervals ────────────────────────────────
   const [bpm, setBpm]               = useState(null)
-  const chordTimestampsRef          = useRef([])
+  const chordTimestampsRef = useRef([])
+  const bpmSmoothRef       = useRef(null)   // exponentially smoothed BPM
 
-  // ── Key: auto-detected + optional lock ───────────────────────────────────
+  // ── Key: auto-detected + optional lock ───────────────────────────────────────
   const [keyInfo, setKeyInfo]     = useState(null)     // auto-detected
   const [lockedKey, setLockedKey] = useState(null)     // { root, mode } or null
+  useEffect(() => { lockedKeyRef.current = lockedKey }, [lockedKey])
   const [lockRoot, setLockRoot]   = useState('A')
   const [lockMode, setLockMode]   = useState('minor')
 
-  // Effective key used by all components
   const effectiveKey = lockedKey ?? keyInfo
 
-  // ── Chord state ───────────────────────────────────────────────────────────
+  // ── Chord state ───────────────────────────────────────────────────────────────
   const [chordHistory, setChordHistory]               = useState([])
   const [detectedProgression, setDetectedProgression] = useState(null)
 
-  // ── Top key candidates (shown as quick-lock chips) ────────────────────────
+  // ── Top key candidates (shown as quick-lock chips) ────────────────────────────
   const [topKeyCandidates, setTopKeyCandidates] = useState([])
 
-  // ── Internal refs ─────────────────────────────────────────────────────────
+  // ── Internal refs ─────────────────────────────────────────────────────────────
   const noteHistoryRef  = useRef([])
   const keyVotesRef     = useRef([])
-  const effectiveKeyRef = useRef(null)    // mirror for use inside callbacks
-  const chromaRingRef   = useRef(
-    Array.from({ length: CHROMA_SMOOTH }, () => new Float32Array(12))
+  const effectiveKeyRef = useRef(null)
+  const chromaRingRef = useRef(
+    Array.from({ length: DEFAULTS.chromaSmooth }, () => new Float32Array(12))
   )
-  const chromaIdxRef    = useRef(0)
+  const chromaIdxRef         = useRef(0)
   const chordVotesRef        = useRef([])
-  const progressionVoteRef   = useRef(null)   // stabilise loop display
-  const pendingKeyRef        = useRef(null)   // proposed key change — require 2 consecutive wins
+  const progressionVoteRef   = useRef(null)
+  const pendingKeyRef        = useRef(null)
 
-  // Keep ref in sync
+  // Keep refs in sync
   useEffect(() => { effectiveKeyRef.current = effectiveKey }, [effectiveKey])
 
-  // ── Detect progression — require 2 consecutive identical results to commit ─
+  // Re-init chroma ring when chromaSmooth changes
+  useEffect(() => {
+    chromaRingRef.current = Array.from(
+      { length: config.chromaSmooth },
+      () => new Float32Array(12)
+    )
+    chromaIdxRef.current = 0
+  }, [config.chromaSmooth])
+
+  // ── Detect progression — require 2 consecutive identical results to commit ────
   useEffect(() => {
     const detected = detectRepeatingProgression(chordHistory)
     if (!detected) return
@@ -73,26 +116,32 @@ export default function App() {
     }
   }, [chordHistory])
 
-  // ── New song — full reset ─────────────────────────────────────────────────
+  // ── New song — full reset ─────────────────────────────────────────────────────
   function newSong() {
-    noteHistoryRef.current   = []
-    keyVotesRef.current      = []
-    chordVotesRef.current    = []
+    const cfg = configRef.current
+    noteHistoryRef.current     = []
+    keyVotesRef.current        = []
+    chordVotesRef.current      = []
     progressionVoteRef.current = null
-    pendingKeyRef.current    = null
-    chromaIdxRef.current     = 0
-    chromaRingRef.current    = Array.from({ length: CHROMA_SMOOTH }, () => new Float32Array(12))
+    pendingKeyRef.current      = null
+    chromaIdxRef.current       = 0
+    chromaRingRef.current      = Array.from({ length: cfg.chromaSmooth }, () => new Float32Array(12))
     chordTimestampsRef.current = []
+    bpmSmoothRef.current       = null
     setKeyInfo(null)
     setLockedKey(null)
-    effectiveKeyRef.current  = null
+    effectiveKeyRef.current    = null
     setChordHistory([])
     setDetectedProgression(null)
     setTopKeyCandidates([])
     setBpm(null)
+    setMicError(null)
+    setDebugChroma(null)
+    setDebugCandidates([])
+    setDebugNoteAnalysis(null)
   }
 
-  // ── Key lock handlers ─────────────────────────────────────────────────────
+  // ── Key lock handlers ─────────────────────────────────────────────────────────
   function applyLock() {
     const info = { root: lockRoot, mode: lockMode, confidence: 1 }
     setLockedKey(info)
@@ -112,27 +161,29 @@ export default function App() {
     effectiveKeyRef.current = keyInfo
   }
 
-  // ── Note handler: drives key detection (pitch-based) ──────────────────────
+  // ── Note handler: drives key detection (pitch-based) ──────────────────────────
   const handleNote = useCallback(({ pitchClass }) => {
+    const cfg = configRef.current
     const history = noteHistoryRef.current
     history.push(pitchClass)
-    if (history.length > NOTE_HISTORY_SIZE) history.shift()
+    if (history.length > cfg.noteHistorySize) history.shift()
     if (history.length < 10) return
     if (history.length % 5 !== 0) return
 
     const result = detectKey(history)
     setTopKeyCandidates(detectTopKeys(history))
+    if (showDebugRef.current) setDebugNoteAnalysis(getNoteHistoryAnalysis(history))
     if (result.confidence < 0.5) return
 
     const votes = keyVotesRef.current
     votes.push(`${result.root}_${result.mode}`)
-    if (votes.length > KEY_VOTE_WINDOW) votes.shift()
+    if (votes.length > cfg.keyVoteWindow) votes.shift()
 
     const counts = {}
     for (const v of votes) counts[v] = (counts[v] || 0) + 1
     const [winner, count] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0]
 
-    if (count >= KEY_VOTE_THRESHOLD) {
+    if (count >= cfg.keyVoteThreshold) {
       const [root, mode] = winner.split('_')
       const candidateKey = `${root}_${mode}`
 
@@ -140,88 +191,108 @@ export default function App() {
         const currentKey = prev ? `${prev.root}_${prev.mode}` : null
 
         if (currentKey === candidateKey) {
-          // Same key — just refresh confidence, clear pending
           pendingKeyRef.current = null
           return { root, mode, confidence: result.confidence }
         }
 
-        // Different key — require a second consecutive win before committing
         if (pendingKeyRef.current === candidateKey) {
           pendingKeyRef.current = null
-          if (!lockedKey) chordVotesRef.current = []
+          if (!lockedKeyRef.current) chordVotesRef.current = []
           return { root, mode, confidence: result.confidence }
         }
 
         pendingKeyRef.current = candidateKey
-        return prev  // hold current key until next confirmation
+        return prev
       })
     }
-  }, [lockedKey])
+  }, [])
 
-  // ── Chroma handler: drives chord detection ────────────────────────────────
+  // ── Chroma handler: drives chord detection ────────────────────────────────────
   const handleChroma = useCallback((chroma, bassPC) => {
+    const cfg = configRef.current
     const ring = chromaRingRef.current
-    ring[chromaIdxRef.current % CHROMA_SMOOTH] = chroma
+    ring[chromaIdxRef.current % cfg.chromaSmooth] = chroma
     chromaIdxRef.current++
-    if (chromaIdxRef.current % CHROMA_SMOOTH !== 0) return
+    if (chromaIdxRef.current % cfg.chromaSmooth !== 0) return
 
     const key = effectiveKeyRef.current
     if (!key) return
 
-    // Average ring buffer
     const avg = new Float32Array(12)
     for (const frame of ring) for (let i = 0; i < 12; i++) avg[i] += frame[i]
-    for (let i = 0; i < 12; i++) avg[i] /= CHROMA_SMOOTH
+    for (let i = 0; i < 12; i++) avg[i] /= cfg.chromaSmooth
 
-    const chord = matchChordFromChroma(avg, key, bassPC, false, CHORD_MIN_SCORE)
+    if (showDebugRef.current) {
+      setDebugChroma([...avg])
+      setDebugCandidates(getChordCandidates(avg, key, bassPC))
+    }
+
+    const chord = matchChordFromChroma(avg, key, bassPC, false, cfg.chordMinScore)
     if (!chord) {
-      // Ambiguous moment (transition, silence) — reset streak, history is untouched
       chordVotesRef.current = []
       return
     }
 
     const votes = chordVotesRef.current
     votes.push(chord)
-    if (votes.length > CHORD_VOTE_THRESHOLD) votes.shift()
+    if (votes.length > cfg.chordVoteThreshold) votes.shift()
 
-    // All last N detections must agree — one wrong reading resets the streak
-    if (votes.length >= CHORD_VOTE_THRESHOLD && votes.every(v => v === votes[0])) {
+    if (votes.length >= cfg.chordVoteThreshold && votes.every(v => v === votes[0])) {
       const winner = votes[0]
       setChordHistory(prev => {
         if (prev[prev.length - 1] === winner) return prev
         return [...prev.slice(-30), winner]
       })
 
-      // BPM: track chord commit timestamps and estimate tempo
+      // BPM: track chord commit timestamps, trim outliers, smooth result
       const now = performance.now()
       const ts = chordTimestampsRef.current
       ts.push(now)
-      if (ts.length > 8) ts.shift()
-      if (ts.length >= 3) {
+      if (ts.length > 32) ts.shift()
+      if (ts.length >= 4) {
         const intervals = []
         for (let i = 1; i < ts.length; i++) intervals.push(ts[i] - ts[i - 1])
-        const avg = intervals.reduce((a, b) => a + b) / intervals.length
-        let estimated = Math.round(60000 / avg)
-        // Chord changes are often every 2 beats — normalise to 55–220 BPM range
-        while (estimated < 55)  estimated *= 2
-        while (estimated > 220) estimated /= 2
-        setBpm(estimated)
+
+        // Trim the most extreme 25% on each side to remove held/rushed chords
+        const sorted = [...intervals].sort((a, b) => a - b)
+        const trim   = Math.max(1, Math.floor(sorted.length * 0.25))
+        const trimmed = sorted.slice(trim, sorted.length - trim)
+        const avgMs  = trimmed.reduce((a, b) => a + b) / trimmed.length
+
+        let raw = 60000 / avgMs
+        while (raw < 55)  raw *= 2
+        while (raw > 220) raw /= 2
+
+        // Exponential smoothing — blend toward new estimate gradually
+        const prev = bpmSmoothRef.current
+        bpmSmoothRef.current = prev === null ? raw : 0.25 * raw + 0.75 * prev
+        setBpm(Math.round(bpmSmoothRef.current))
       }
 
-      // Inject chord tones into note history with boost weight so key detection
-      // anchors to confirmed chords rather than transient melody notes
+      // Inject chord tones into note history to anchor key detection
       const chordPCs = getChordTones(winner)
         .map(n => NOTES.indexOf(n))
         .filter(i => i >= 0)
       const history = noteHistoryRef.current
-      for (let j = 0; j < CHORD_NOTE_BOOST; j++) {
+      for (let j = 0; j < cfg.chordNoteBoost; j++) {
         for (const pc of chordPCs) history.push(pc)
       }
-      while (history.length > NOTE_HISTORY_SIZE) history.shift()
+      while (history.length > cfg.noteHistorySize) history.shift()
     }
   }, [])
 
   const currentChord = chordHistory[chordHistory.length - 1]
+
+  if (showSettings) {
+    return (
+      <Settings
+        config={config}
+        onChange={updateConfig}
+        onClose={() => setShowSettings(false)}
+        onReset={() => setConfig(DEFAULTS)}
+      />
+    )
+  }
 
   return (
     <div className="min-h-screen bg-surface text-white p-3">
@@ -234,16 +305,30 @@ export default function App() {
           </h1>
           <p className="text-xs text-gray-600">Real-time key detection for live jams</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
           <button
-            onClick={newSong}
-            className="px-3 py-2 rounded-full text-sm border border-border text-gray-500 hover:text-gray-300 hover:border-gray-400 transition-all leading-tight text-center"
+            onClick={() => setShowDebug(v => !v)}
+            className={`p-2 rounded-full border transition-all ${showDebug ? 'border-accent bg-accent/10' : 'border-border hover:border-gray-400'}`}
+            title="Behind the scenes"
           >
-            <span className="block font-semibold">New Song</span>
-            <span className="block text-xs opacity-60">clear history</span>
+            <img src={viewIcon} alt="Debug view" className="w-5 h-5" style={{ filter: 'invert(1) opacity(0.75)' }} />
           </button>
           <button
-            onClick={() => setIsListening(l => !l)}
+            onClick={() => setShowSettings(true)}
+            className="p-2 rounded-full border border-border hover:border-gray-400 transition-all"
+            title="Settings"
+          >
+            <img src={settingIcon} alt="Settings" className="w-5 h-5" style={{ filter: 'invert(1) opacity(0.75)' }} />
+          </button>
+          <button
+            onClick={newSong}
+            className="group px-5 py-2 rounded-full text-sm font-semibold border border-border text-gray-400 hover:text-gray-200 hover:border-gray-400 transition-all"
+          >
+            <span className="group-hover:hidden">New Song</span>
+            <span className="hidden group-hover:inline">Clear History</span>
+          </button>
+          <button
+            onClick={() => { setMicError(null); setIsListening(l => !l) }}
             className={`px-5 py-2 rounded-full font-semibold text-sm transition-all ${
               isListening
                 ? 'bg-red-600 hover:bg-red-700 text-white'
@@ -257,12 +342,53 @@ export default function App() {
 
       {/* ── Controls bar ── */}
       <div className="mb-2 flex flex-wrap gap-2 items-center p-2 bg-panel border border-border rounded-xl">
+
+        {/* Instrument select */}
+        <div className="relative">
+          <select
+            value={instrument}
+            onChange={e => setInstrument(e.target.value)}
+            className="appearance-none bg-surface border border-border hover:border-gray-500 focus:border-accent focus:outline-none rounded-lg pl-3 pr-7 py-1 text-sm text-gray-200 cursor-pointer transition-colors"
+          >
+            <option value="guitar">Guitar</option>
+            <option value="piano">Piano</option>
+          </select>
+          <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs">▾</span>
+        </div>
+
+        {/* BPM badge */}
+        {bpm && (
+          <span className="px-3 py-1 bg-accent/10 border border-accent/30 rounded-lg text-sm text-accent font-mono tabular-nums">
+            ♩ <span className="inline-block w-[3ch] text-right">{Math.round(bpm)}</span> <span className="text-accent/50 text-xs">BPM</span>
+          </span>
+        )}
+
+        <div className="w-px h-5 bg-border shrink-0" />
+
         {lockedKey ? (
-          <div className="flex items-center gap-2">
-            <span className="px-3 py-1 bg-accent/20 border border-accent text-accent rounded-full text-sm font-semibold">
-              🔒 {lockedKey.root} {lockedKey.mode}
-            </span>
-            <button onClick={removeLock} className="text-xs text-gray-500 hover:text-gray-300 underline">
+          <div className="flex items-center gap-2 px-3 py-1 bg-accent/20 border border-accent rounded-full">
+            <span className="text-accent text-sm font-semibold shrink-0">🔒 {lockedKey.root}</span>
+            <div className="relative">
+              <select
+                value={lockedKey.mode}
+                onChange={e => {
+                  const info = { ...lockedKey, mode: e.target.value }
+                  setLockedKey(info)
+                  effectiveKeyRef.current = info
+                  chordVotesRef.current = []
+                }}
+                className="appearance-none bg-transparent text-accent text-sm font-semibold border-none outline-none cursor-pointer pr-4"
+              >
+                <option value="major">Major</option>
+                <option value="minor">Minor</option>
+                <option value="dorian">Dorian</option>
+                <option value="mixolydian">Mixolydian</option>
+                <option value="phrygian">Phrygian</option>
+                <option value="lydian">Lydian</option>
+              </select>
+              <span className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 text-accent/60 text-xs">▾</span>
+            </div>
+            <button onClick={removeLock} className="text-xs text-accent/50 hover:text-accent transition-colors">
               unlock
             </button>
           </div>
@@ -275,39 +401,66 @@ export default function App() {
                 className={`px-3 py-1 rounded-full text-sm font-semibold border transition-all ${
                   i === 0
                     ? 'border-accent text-accent hover:bg-accent/10'
-                    : 'border-border text-gray-400 hover:border-gray-400 hover:text-gray-200'
+                    : 'border-border text-gray-400 hover:border-gray-500 hover:text-gray-200'
                 }`}
               >
                 {k.root} {k.mode === 'major' ? 'maj' : 'min'} · {Math.round(k.confidence * 100)}%
               </button>
             ))}
             {topKeyCandidates.length > 0 && <span className="text-gray-600 text-xs">or</span>}
-            <select
-              value={lockRoot}
-              onChange={e => setLockRoot(e.target.value)}
-              className="bg-surface border border-border rounded-lg px-2 py-1 text-sm text-gray-300"
-            >
-              {NOTES.map(n => <option key={n}>{n}</option>)}
-            </select>
-            <select
-              value={lockMode}
-              onChange={e => setLockMode(e.target.value)}
-              className="bg-surface border border-border rounded-lg px-2 py-1 text-sm text-gray-300"
-            >
-              <option value="major">Major</option>
-              <option value="minor">Minor</option>
-            </select>
+            <div className="relative">
+              <select
+                value={lockRoot}
+                onChange={e => setLockRoot(e.target.value)}
+                className="appearance-none bg-surface border border-border hover:border-gray-500 focus:border-accent focus:outline-none rounded-lg pl-3 pr-7 py-1 text-sm text-gray-200 cursor-pointer transition-colors"
+              >
+                {NOTES.map(n => <option key={n}>{n}</option>)}
+              </select>
+              <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs">▾</span>
+            </div>
+            <div className="relative">
+              <select
+                value={lockMode}
+                onChange={e => setLockMode(e.target.value)}
+                className="appearance-none bg-surface border border-border hover:border-gray-500 focus:border-accent focus:outline-none rounded-lg pl-3 pr-7 py-1 text-sm text-gray-200 cursor-pointer transition-colors"
+              >
+                <option value="major">Major</option>
+                <option value="minor">Minor</option>
+                <option value="dorian">Dorian</option>
+                <option value="mixolydian">Mixolydian</option>
+                <option value="phrygian">Phrygian</option>
+                <option value="lydian">Lydian</option>
+              </select>
+              <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs">▾</span>
+            </div>
             <button
               onClick={applyLock}
-              className="px-3 py-1 bg-border hover:bg-accent/20 border border-border hover:border-accent text-sm rounded-lg transition-all"
+              className="px-3 py-1 bg-accent/10 hover:bg-accent/20 border border-accent/40 hover:border-accent text-accent text-sm rounded-lg transition-all"
             >
-              Lock
+              Lock key
             </button>
           </div>
         )}
       </div>
 
-      <AudioCapture onNote={handleNote} onChroma={handleChroma} isListening={isListening} />
+      <AudioCapture
+        onNote={handleNote}
+        onChroma={handleChroma}
+        isListening={isListening}
+        minClarity={config.minClarity}
+        minVolume={config.minVolume}
+        onPermissionError={() => {
+          setMicError(true)
+          setIsListening(false)
+        }}
+      />
+
+      {micError && (
+        <div className="mb-2 px-4 py-3 rounded-xl border border-red-800 bg-red-900/20 text-sm text-red-400 flex items-center justify-between">
+          <span>Microphone permission denied. Please allow microphone access in your browser or OS settings and try again.</span>
+          <button onClick={() => setMicError(null)} className="ml-4 text-red-600 hover:text-red-400 text-lg leading-none">×</button>
+        </div>
+      )}
 
       {/* ── Progression banner ── */}
       <ProgressionBanner
@@ -315,35 +468,36 @@ export default function App() {
         keyInfo={effectiveKey}
         detectedProgression={detectedProgression}
         currentChord={currentChord}
-        bpm={bpm}
       />
 
       {/* ── Instrument + progressions row ── */}
-      <div className="flex gap-3 mb-3">
-        {/* Left: fretboard / piano */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center justify-between mb-1 px-1">
-            <span className="text-xs text-gray-500 uppercase tracking-widest">Instrument</span>
-            <select
-              value={instrument}
-              onChange={e => setInstrument(e.target.value)}
-              className="bg-surface border border-border rounded-lg px-2 py-1 text-sm text-gray-300"
-            >
-              <option value="guitar">Guitar</option>
-              <option value="piano">Piano</option>
-            </select>
-          </div>
+      <div className="flex gap-3 mb-3 items-stretch">
+        <div className="w-full lg:w-[70%] min-w-0">
           {instrument === 'guitar'
             ? <Fretboard keyInfo={effectiveKey} currentChord={currentChord} pentatonicOnly={false} />
             : <Piano keyInfo={effectiveKey} currentChord={currentChord} />
           }
         </div>
 
-        {/* Right: genre progression suggestions */}
-        <div className="w-56 shrink-0">
-          <ProgressionSuggestions keyInfo={effectiveKey} />
+        <div className="hidden lg:block w-[30%] min-w-0 relative">
+          <div className="absolute inset-0">
+            <ProgressionSuggestions keyInfo={effectiveKey} currentChord={currentChord} />
+          </div>
         </div>
       </div>
+
+      {/* ── Behind the scenes debug view ── */}
+      {showDebug && (
+        <div className="mb-3">
+          <DebugView
+            chroma={debugChroma}
+            chordCandidates={debugCandidates}
+            noteAnalysis={debugNoteAnalysis}
+            keyInfo={effectiveKey}
+            currentChord={currentChord}
+          />
+        </div>
+      )}
 
       {/* ── Tuner — collapsible ── */}
       <div>

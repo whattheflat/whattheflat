@@ -65,23 +65,46 @@ const CHORD_MATCH_MIN_SCORE  = 0.42
 // Minimum margin over second-best for a match to be considered unambiguous
 const CHORD_MATCH_MIN_MARGIN = 0.04
 
-// Chord quality for each scale degree in major and minor
+// Chord quality for each scale degree, per mode
 const DEGREE_QUALITIES = {
-  major: ['',  'm', 'm', '',  '',  'm', 'dim'],
-  minor: ['m', 'dim', '', 'm', 'm', '',  ''  ],
+  major:      ['',  'm',   'm',   '',    '',  'm',   'dim'],
+  minor:      ['m', 'dim', '',    'm',   'm', '',    ''   ],
+  dorian:     ['m', 'm',   '',    '',    'm', 'dim', ''   ],
+  phrygian:   ['m', '',    '',    'm',   'dim','',   'm'  ],
+  lydian:     ['',  '',    'm',   'dim', '',  'm',   'm'  ],
+  mixolydian: ['',  'm',   'dim', '',    'm', 'm',   ''   ],
 }
 
 const ROMAN_NUMERALS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII']
 
 // Common chord progressions by genre, expressed as semitone offsets from the root
 const PROGRESSIONS = {
-  pop:    { name: 'Pop',      rn: ['I', 'V', 'vi', 'IV'],    degrees: [0, 7, 9, 5]  },
-  blues:  { name: 'Blues',    rn: ['I', 'IV', 'V'],           degrees: [0, 5, 7]     },
-  folk:   { name: 'Folk',     rn: ['I', 'IV', 'I', 'V'],     degrees: [0, 5, 0, 7]  },
-  jazz:   { name: 'Jazz',     rn: ['ii', 'V', 'I'],           degrees: [2, 7, 0]     },
-  rock:   { name: 'Rock',     rn: ['I', 'bVII', 'IV', 'I'],  degrees: [0, 10, 5, 0] },
-  '50s':  { name: "'50s",     rn: ['I', 'vi', 'IV', 'V'],    degrees: [0, 9, 5, 7]  },
-  flamen: { name: 'Flamenco', rn: ['i', 'bVII', 'bVI', 'V'], degrees: [0, 10, 8, 7] },
+  // Pop
+  pop:     { name: 'Pop',      rn: ['I', 'V', 'vi', 'IV'],      degrees: [0, 7, 9, 5]     },
+  pop2:    { name: 'Pop',      rn: ['I', 'IV', 'vi', 'V'],      degrees: [0, 5, 9, 7]     },
+  pop3:    { name: 'Pop',      rn: ['I', 'vi', 'ii', 'V'],      degrees: [0, 9, 2, 7]     },
+  // Blues
+  blues:   { name: 'Blues',    rn: ['I', 'IV', 'V'],             degrees: [0, 5, 7]        },
+  blues2:  { name: 'Blues',    rn: ['I', 'IV', 'V', 'IV'],       degrees: [0, 5, 7, 5]     },
+  blues3:  { name: 'Blues',    rn: ['I', 'I', 'IV', 'V'],        degrees: [0, 0, 5, 7]     },
+  // Folk
+  folk:    { name: 'Folk',     rn: ['I', 'IV', 'I', 'V'],        degrees: [0, 5, 0, 7]     },
+  folk2:   { name: 'Folk',     rn: ['I', 'V', 'IV', 'I'],        degrees: [0, 7, 5, 0]     },
+  folk3:   { name: 'Folk',     rn: ['I', 'ii', 'IV', 'V'],       degrees: [0, 2, 5, 7]     },
+  // Jazz
+  jazz:    { name: 'Jazz',     rn: ['ii', 'V', 'I'],             degrees: [2, 7, 0]        },
+  jazz2:   { name: 'Jazz',     rn: ['I', 'vi', 'ii', 'V'],       degrees: [0, 9, 2, 7]     },
+  jazz3:   { name: 'Jazz',     rn: ['iii', 'vi', 'ii', 'V'],     degrees: [4, 9, 2, 7]     },
+  // Rock
+  rock:    { name: 'Rock',     rn: ['I', 'bVII', 'IV', 'I'],     degrees: [0, 10, 5, 0]    },
+  rock2:   { name: 'Rock',     rn: ['I', 'IV', 'V', 'I'],        degrees: [0, 5, 7, 0]     },
+  rock3:   { name: 'Rock',     rn: ['I', 'bVII', 'bVI', 'bVII'], degrees: [0, 10, 8, 10]   },
+  // '50s
+  '50s':   { name: "'50s",     rn: ['I', 'vi', 'IV', 'V'],       degrees: [0, 9, 5, 7]     },
+  '50s2':  { name: "'50s",     rn: ['I', 'V', 'vi', 'iii'],      degrees: [0, 7, 9, 4]     },
+  // Flamenco
+  flamen:  { name: 'Flamenco', rn: ['i', 'bVII', 'bVI', 'V'],   degrees: [0, 10, 8, 7]    },
+  flamen2: { name: 'Flamenco', rn: ['i', 'bVI', 'bVII', 'i'],   degrees: [0, 8, 10, 0]    },
 }
 
 // ─── Internal helpers ────────────────────────────────────────────────────────
@@ -367,6 +390,64 @@ export function detectRepeatingProgression(history) {
   }
 
   return best
+}
+
+// ─── Debug / analysis helpers ─────────────────────────────────────────────────
+
+/**
+ * Returns top N chord candidates with full score breakdown for the given chroma.
+ */
+export function getChordCandidates(chroma, keyInfo, bassPC = null, topN = 8) {
+  if (!keyInfo?.root || !chroma) return []
+  const diatonicSet = new Set(getChordsInKey(keyInfo.root, keyInfo.mode))
+  const candidates  = []
+
+  for (let r = 0; r < 12; r++) {
+    for (const typeKey of MATCH_CHORD_TYPES) {
+      const type      = CHORD_TYPES[typeKey]
+      const chordName = noteName(r) + type.suffix
+      const tones     = new Set(type.intervals.map(i => (r + i) % 12))
+
+      let inEnergy = 0, outEnergy = 0
+      for (let pc = 0; pc < 12; pc++) {
+        if      (pc === r)        inEnergy  += chroma[pc] * 2
+        else if (tones.has(pc))   inEnergy  += chroma[pc]
+        else                      outEnergy += chroma[pc]
+      }
+      if (inEnergy + outEnergy < 0.05) continue
+
+      const coverage     = inEnergy / (inEnergy + outEnergy * 0.5)
+      const bassBonus    = bassPC !== null && r === bassPC ? 0.15 : 0
+      const diatBonus    = diatonicSet.has(chordName) ? 0.15 : 0
+      const score        = coverage + bassBonus + diatBonus
+      candidates.push({ name: chordName, score, coverage, bassBonus, diatBonus, diatonic: diatonicSet.has(chordName) })
+    }
+  }
+  return candidates.sort((a, b) => b.score - a.score).slice(0, topN)
+}
+
+/**
+ * Analyses note history: returns normalised pitch-class frequencies and
+ * top K-S key candidates with correlation scores.
+ */
+export function getNoteHistoryAnalysis(noteHistory) {
+  const freq = new Array(12).fill(0)
+  if (!noteHistory?.length) return { freq, topKeys: [] }
+
+  for (const note of noteHistory) freq[((note % 12) + 12) % 12]++
+  const total      = noteHistory.length
+  const normalized = freq.map(f => f / total)
+
+  const candidates = []
+  for (let root = 0; root < 12; root++) {
+    const rotated = Array.from({ length: 12 }, (_, i) => normalized[(i + root) % 12])
+    candidates.push({ root: noteName(root), mode: 'major', score: pearsonCorrelation(rotated, KS_MAJOR) })
+    candidates.push({ root: noteName(root), mode: 'minor', score: pearsonCorrelation(rotated, KS_MINOR) })
+  }
+  return {
+    freq:    normalized,
+    topKeys: candidates.sort((a, b) => b.score - a.score).slice(0, 5),
+  }
 }
 
 // ─── Utilities ───────────────────────────────────────────────────────────────
