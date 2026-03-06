@@ -9,3 +9,5 @@ build/
 # Env
 .env
 debug.log
+
+releases/

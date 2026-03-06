@@ -42,11 +42,13 @@
       "package.json"
     ],
     "directories": {
-      "buildResources": "assets"
+      "buildResources": "assets",
+      "output": "releases"
     },
     "win": {
       "target": "nsis",
-      "icon": "assets/whattheflat-logo.png"
+      "icon": "assets/whattheflat-logo.png",
+      "forceCodeSigning": false
     },
     "mac": {
       "target": "dmg",
