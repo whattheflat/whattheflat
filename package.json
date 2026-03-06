@@ -1,6 +1,7 @@
 {
   "name": "whattheflat",
-  "version": "0.1.0",
+  "description": "A jam session companion app that provides a chromatic tuner, chord progressions, and more.",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",
@@ -42,8 +43,8 @@
       "package.json"
     ],
     "directories": {
-      "buildResources": "assets",
-      "output": "releases"
+      "buildResources": "dist",
+      "output": "release"
     },
     "win": {
       "target": "nsis",
@@ -51,8 +52,12 @@
       "forceCodeSigning": false
     },
     "mac": {
-      "target": "dmg",
-      "icon": "assets/whattheflat-logo-mac.png"
+      "hardenedRuntime": true,
+      "entitlements": "electron/entitlements.mac.plist",
+      "entitlementsInherit": "electron/entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "WhatTheFlat needs access to your microphone to detect pitch and provide the tuner."
+      }
     },
     "linux": {
       "target": "AppImage",
