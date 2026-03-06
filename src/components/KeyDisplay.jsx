@@ -3,13 +3,13 @@ export default function KeyDisplay({ keyInfo, locked = false }) {
   const pct = confidence ? Math.round(confidence * 100) : 0
 
   return (
-    <div className="bg-panel border border-border rounded-2xl p-6 text-center">
-      <p className="text-sm text-gray-500 uppercase tracking-widest mb-1">
+    <div className="bg-panel border border-border rounded-2xl p-4 text-center">
+      <p className="text-xs text-gray-500 uppercase tracking-widest mb-1">
         {locked ? '🔒 Key (locked)' : 'Detected Key'}
       </p>
       {root ? (
         <>
-          <p className="text-6xl font-bold text-accent leading-none">
+          <p className="text-5xl font-bold text-accent leading-none">
             {root}
             <span className="text-3xl text-gray-400 ml-2">{mode}</span>
           </p>

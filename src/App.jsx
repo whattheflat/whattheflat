@@ -17,15 +17,17 @@ const KEY_VOTE_THRESHOLD = 9     // out of 12
 const CHORD_NOTE_BOOST   = 3     // confirmed chord tones injected N× into note history
 
 // Chord detection tuning
-const CHROMA_SMOOTH        = 12   // frames to average (~200ms at 60fps)
-const CHORD_VOTE_THRESHOLD = 3    // consecutive identical detections required
+const CHROMA_SMOOTH        = 8    // frames to average — more responsive
+const CHORD_VOTE_THRESHOLD = 2    // consecutive identical detections required
+const CHORD_MIN_SCORE      = 0.38 // lower = more chord types detected
 
 export default function App() {
   // ── Listening state ──────────────────────────────────────────────────────
   const [isListening, setIsListening] = useState(false)
 
-  // ── Instrument view ───────────────────────────────────────────────────────
+  // ── Instrument view + tuner ───────────────────────────────────────────────
   const [instrument, setInstrument] = useState('guitar')  // 'guitar' | 'piano'
+  const [showTuner, setShowTuner]   = useState(false)
 
   // ── Key: auto-detected + optional lock ───────────────────────────────────
   const [keyInfo, setKeyInfo]     = useState(null)     // auto-detected
@@ -168,7 +170,7 @@ export default function App() {
     for (const frame of ring) for (let i = 0; i < 12; i++) avg[i] += frame[i]
     for (let i = 0; i < 12; i++) avg[i] /= CHROMA_SMOOTH
 
-    const chord = matchChordFromChroma(avg, key, bassPC, false)
+    const chord = matchChordFromChroma(avg, key, bassPC, false, CHORD_MIN_SCORE)
     if (!chord) {
       // Ambiguous moment (transition, silence) — reset streak, history is untouched
       chordVotesRef.current = []
@@ -203,26 +205,27 @@ export default function App() {
   const currentChord = chordHistory[chordHistory.length - 1]
 
   return (
-    <div className="min-h-screen bg-surface text-white p-4 md:p-6">
+    <div className="min-h-screen bg-surface text-white p-3">
 
       {/* ── Header ── */}
-      <header className="mb-4 flex items-center justify-between">
+      <header className="mb-2 flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-accent">
+          <h1 className="text-xl font-bold text-accent">
             WhatTheFlat <span className="text-gray-600">&#9837;?</span>
           </h1>
-          <p className="text-xs text-gray-600 mt-0.5">Real-time key detection for real humans</p>
+          <p className="text-xs text-gray-600">Real-time key detection for live jams</p>
         </div>
         <div className="flex gap-2">
           <button
             onClick={newSong}
-            className="px-4 py-2.5 rounded-full font-semibold text-sm border border-border text-gray-400 hover:text-gray-200 hover:border-gray-400 transition-all"
+            className="px-3 py-2 rounded-full text-sm border border-border text-gray-500 hover:text-gray-300 hover:border-gray-400 transition-all leading-tight text-center"
           >
-            New Song
+            <span className="block font-semibold">New Song</span>
+            <span className="block text-xs opacity-60">clear history</span>
           </button>
           <button
             onClick={() => setIsListening(l => !l)}
-            className={`px-5 py-2.5 rounded-full font-semibold text-sm transition-all ${
+            className={`px-5 py-2 rounded-full font-semibold text-sm transition-all ${
               isListening
                 ? 'bg-red-600 hover:bg-red-700 text-white'
                 : 'bg-accent hover:bg-purple-600 text-white'
@@ -234,38 +237,18 @@ export default function App() {
       </header>
 
       {/* ── Controls bar ── */}
-      <div className="mb-4 flex flex-wrap gap-3 items-center p-3 bg-panel border border-border rounded-xl">
-        {/* Instrument toggle */}
-        <div className="flex bg-surface border border-border rounded-full p-0.5 text-sm">
-          {['guitar', 'piano'].map(v => (
-            <button
-              key={v}
-              onClick={() => setInstrument(v)}
-              className={`px-4 py-1 rounded-full capitalize transition-all ${
-                instrument === v ? 'bg-accent text-white' : 'text-gray-400 hover:text-gray-200'
-              }`}
-            >
-              {v}
-            </button>
-          ))}
-        </div>
-
-        {/* Key lock */}
+      <div className="mb-2 flex flex-wrap gap-2 items-center p-2 bg-panel border border-border rounded-xl">
         {lockedKey ? (
           <div className="flex items-center gap-2">
             <span className="px-3 py-1 bg-accent/20 border border-accent text-accent rounded-full text-sm font-semibold">
               🔒 {lockedKey.root} {lockedKey.mode}
             </span>
-            <button
-              onClick={removeLock}
-              className="text-xs text-gray-500 hover:text-gray-300 underline"
-            >
+            <button onClick={removeLock} className="text-xs text-gray-500 hover:text-gray-300 underline">
               unlock
             </button>
           </div>
         ) : (
           <div className="flex flex-wrap gap-2 items-center">
-            {/* Top 3 detected key candidates — click to lock */}
             {topKeyCandidates.map((k, i) => (
               <button
                 key={i}
@@ -279,10 +262,7 @@ export default function App() {
                 {k.root} {k.mode === 'major' ? 'maj' : 'min'} · {Math.round(k.confidence * 100)}%
               </button>
             ))}
-            {topKeyCandidates.length > 0 && (
-              <span className="text-gray-600 text-xs">or</span>
-            )}
-            {/* Manual override */}
+            {topKeyCandidates.length > 0 && <span className="text-gray-600 text-xs">or</span>}
             <select
               value={lockRoot}
               onChange={e => setLockRoot(e.target.value)}
@@ -310,7 +290,7 @@ export default function App() {
 
       <AudioCapture onNote={handleNote} onChroma={handleChroma} isListening={isListening} />
 
-      {/* ── Progression banner — full width ── */}
+      {/* ── Progression banner ── */}
       <ProgressionBanner
         chordHistory={chordHistory}
         keyInfo={effectiveKey}
@@ -318,24 +298,41 @@ export default function App() {
       />
 
       {/* ── Main grid ── */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <KeyDisplay keyInfo={effectiveKey} locked={!!lockedKey} />
         <ChordDisplay history={chordHistory} />
         <SafeNotes keyInfo={effectiveKey} currentChord={currentChord} />
         <ProgressionSuggestions keyInfo={effectiveKey} />
+
+        {/* ── Instrument view — select in header ── */}
         <div className="md:col-span-2">
-          {instrument === 'guitar' ? (
-            <Fretboard
-              keyInfo={effectiveKey}
-              currentChord={currentChord}
-              pentatonicOnly={false}
-            />
-          ) : (
-            <Piano keyInfo={effectiveKey} currentChord={currentChord} />
-          )}
+          <div className="flex items-center justify-between mb-1 px-1">
+            <span className="text-xs text-gray-500 uppercase tracking-widest">Instrument</span>
+            <select
+              value={instrument}
+              onChange={e => setInstrument(e.target.value)}
+              className="bg-surface border border-border rounded-lg px-2 py-1 text-sm text-gray-300"
+            >
+              <option value="guitar">Guitar</option>
+              <option value="piano">Piano</option>
+            </select>
+          </div>
+          {instrument === 'guitar'
+            ? <Fretboard keyInfo={effectiveKey} currentChord={currentChord} pentatonicOnly={false} />
+            : <Piano keyInfo={effectiveKey} currentChord={currentChord} />
+          }
         </div>
+
+        {/* ── Tuner — collapsible ── */}
         <div className="md:col-span-2">
-          <Tuner />
+          <button
+            onClick={() => setShowTuner(v => !v)}
+            className="w-full flex items-center justify-between px-4 py-2 bg-panel border border-border rounded-xl text-sm text-gray-400 hover:text-gray-200 hover:border-gray-500 transition-all"
+          >
+            <span>Tuner</span>
+            <span>{showTuner ? '▲' : '▼'}</span>
+          </button>
+          {showTuner && <div className="mt-2"><Tuner /></div>}
         </div>
       </div>
     </div>

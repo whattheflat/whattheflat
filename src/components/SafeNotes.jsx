@@ -12,15 +12,15 @@ export default function SafeNotes({ keyInfo, currentChord }) {
   const chordTones = currentChord ? getChordTones(currentChord) : []
 
   return (
-    <div className="bg-panel border border-border rounded-2xl p-6">
-      <p className="text-sm text-gray-500 uppercase tracking-widest mb-4">Safe Notes</p>
-      <div className="flex gap-2 flex-wrap">
+    <div className="bg-panel border border-border rounded-2xl p-4">
+      <p className="text-xs text-gray-500 uppercase tracking-widest mb-2">Safe Notes</p>
+      <div className="flex gap-1.5 flex-wrap">
         {ALL_NOTES.map(note => {
           const isChordTone = chordTones.includes(note)
           const isPenta = penta.includes(note)
           const isScale = full.includes(note)
 
-          let cls = 'px-3 py-2 rounded-lg text-sm font-semibold border transition-all '
+          let cls = 'px-2.5 py-1.5 rounded-lg text-sm font-semibold border transition-all '
           if (isChordTone) {
             cls += 'bg-accent text-white border-accent scale-105'
           } else if (isPenta) {
@@ -36,7 +36,7 @@ export default function SafeNotes({ keyInfo, currentChord }) {
           )
         })}
       </div>
-      <div className="mt-3 flex gap-4 text-xs text-gray-500">
+      <div className="mt-2 flex gap-4 text-xs text-gray-500">
         <span><span className="text-accent">■</span> Chord tone</span>
         <span><span className="text-accent/60">■</span> Pentatonic</span>
         <span><span className="text-gray-500">■</span> Scale</span>
