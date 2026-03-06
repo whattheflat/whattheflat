@@ -10,8 +10,8 @@
     "preview": "vite preview",
     "electron:dev": "concurrently -k \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "electron:build": "vite build && electron-builder",
-    "electron:build:win": "vite build && electron-builder --win",
-    "electron:build:mac": "vite build && electron-builder --mac",
+    "electron:build:win": "vite build && electron-builder --win --publish never",
+    "electron:build:mac": "vite build && electron-builder --mac --publish never",
     "electron:build:linux": "vite build && electron-builder --linux"
   },
   "dependencies": {
