@@ -11,3 +11,5 @@ build/
 debug.log
 
 releases/
+release/
+.DS_Store
