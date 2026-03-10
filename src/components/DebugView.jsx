@@ -43,7 +43,7 @@ function PianoSVG({ values, keyNotes, chordNotes, keyH = KEY_H, showPct = false 
           <g key={`w${wi}`}>
             <rect x={x+1} y={3} width={KEY_W-2} height={keyH}
               rx={3} fill="rgb(20,20,26)" stroke="rgba(255,255,255,0.08)" strokeWidth={1} />
-            {energy > 0.04 && (
+            {energy > (inChord || inKey ? 0.12 : 0.35) && (
               <rect
                 x={x+1} y={3 + keyH * (1 - Math.min(energy, 1) * 0.85)}
                 width={KEY_W-2} height={keyH * Math.min(energy, 1) * 0.85}
@@ -69,17 +69,34 @@ function PianoSVG({ values, keyNotes, chordNotes, keyH = KEY_H, showPct = false 
         const inChord = chordNotes?.has(pc)
         const inKey   = keyNotes?.has(pc)
         const x = wi * KEY_W + KEY_W - BLACK_W / 2
-        const bg = inChord
-          ? `rgba(139,92,246,${0.4 + energy * 0.6})`
+        const fillColor = inChord
+          ? 'rgba(139,92,246,0.9)'
           : inKey
-          ? `rgba(180,130,0,${0.35 + energy * 0.55})`
-          : `rgba(12,12,16,0.95)`
+          ? 'rgba(180,130,0,0.85)'
+          : 'rgba(70,70,80,0.75)'
+        const pct = showPct ? Math.round(values[pc] * 100) : 0
 
         return (
           <g key={`b${i}`}>
+            {/* Base */}
             <rect x={x} y={3} width={BLACK_W} height={BLACK_H}
-              rx={2} fill={bg} stroke="rgba(255,255,255,0.06)" strokeWidth={1} />
-            <text x={x + BLACK_W/2} y={BLACK_H - 5} textAnchor="middle" fontSize={7}
+              rx={2} fill="rgb(14,14,18)" stroke="rgba(255,255,255,0.06)" strokeWidth={1} />
+            {/* Partial fill from bottom — same mechanic as white keys */}
+            {energy > (inChord || inKey ? 0.05 : 0.35) && (
+              <rect
+                x={x} y={3 + BLACK_H * (1 - Math.min(energy, 1) * 0.9)}
+                width={BLACK_W} height={BLACK_H * Math.min(energy, 1) * 0.9}
+                rx={1} fill={fillColor} />
+            )}
+            {/* % label near top of key (inside) */}
+            {showPct && pct > 0 && (
+              <text x={x + BLACK_W/2} y={3 + 10} textAnchor="middle" fontSize={7}
+                fill={inKey || inChord ? 'rgba(220,220,230,0.9)' : 'rgba(110,110,120,0.7)'}>
+                {pct}%
+              </text>
+            )}
+            {/* Note name near bottom of key */}
+            <text x={x + BLACK_W/2} y={3 + BLACK_H - 5} textAnchor="middle" fontSize={7}
               fill={inKey || inChord ? 'rgba(210,210,220,0.85)' : 'rgba(110,110,120,0.6)'}>
               {NOTES[pc]}
             </text>
@@ -170,7 +187,8 @@ function MiniFretboard({ values, keyNotes, chordNotes }) {
           const energy  = values[pc] / max
           const inChord = chordNotes?.has(pc)
           const inKey   = keyNotes?.has(pc)
-          if (!inChord && !inKey && energy < 0.12) return null
+          if (!inChord && !inKey && energy < 0.35) return null
+          if ((inChord || inKey) && energy < 0.08) return null
 
           const cx = fi === 0 ? MF_OPEN_X : mfFretX(fi)
           const cy = mfStringY(si)
@@ -206,14 +224,213 @@ function MiniFretboard({ values, keyNotes, chordNotes }) {
   )
 }
 
+// ─── Oscilloscope strip ───────────────────────────────────────────────────────
+const OSC_W = 600
+const OSC_H = 110
+
+function Oscilloscope({ waveform }) {
+  const { wave, rms, detectedFreq, detectedNote } = waveform || {}
+  const silent = !rms || rms < 0.005
+
+  let path = '', sinePath = ''
+  if (wave?.length) {
+    const mid     = OSC_H / 2
+    const waveAmp = Math.max(...wave.map(Math.abs), 0.001)
+    const gain    = Math.min((OSC_H * 0.44) / waveAmp, OSC_H * 0.44)
+
+    // Zero-crossing trigger: find first upward zero cross in first half → stable display
+    const lo = Math.floor(wave.length / 4)
+    const hi = Math.floor(wave.length / 2)
+    let offset = lo
+    for (let i = lo; i < hi - 1; i++) {
+      if (wave[i] <= 0 && wave[i + 1] > 0) { offset = i; break }
+    }
+    const drawLen = Math.min(wave.length - offset, Math.floor(wave.length * 0.85))
+    const step    = OSC_W / drawLen
+
+    path = Array.from({ length: drawLen }, (_, i) => {
+      const v = wave[offset + i]
+      return `${i === 0 ? 'M' : 'L'}${(i * step).toFixed(1)},${(mid - v * gain).toFixed(1)}`
+    }).join(' ')
+
+    // Sine overlay at the detected fundamental, phase-matched to trigger offset
+    if (detectedFreq) {
+
+      const effectiveSR = 44100 / 8
+      const sineAmp = Math.min(waveAmp * gain * 0.55, OSC_H * 0.38)
+      sinePath = Array.from({ length: 300 }, (_, i) => {
+        const t     = i / 299
+        const x     = (t * OSC_W).toFixed(1)
+        const phase = ((offset + t * drawLen) / effectiveSR) * detectedFreq * Math.PI * 2
+        const y     = (mid - Math.sin(phase) * sineAmp).toFixed(1)
+        return `${i === 0 ? 'M' : 'L'}${x},${y}`
+      }).join(' ')
+    }
+  }
+
+  const lineColor = detectedFreq
+    ? 'rgba(168,85,247,0.9)'
+    : silent ? 'rgba(50,50,60,0.8)' : 'rgba(100,200,140,0.75)'
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <p className="text-xs text-gray-600 uppercase tracking-widest">Oscilloscope — raw mic input</p>
+        <div className="flex items-center gap-3">
+          {detectedFreq && detectedNote && (
+            <>
+              <span className="text-xs font-bold text-accent">{detectedNote}</span>
+              <span className="text-xs text-gray-500 tabular-nums">{detectedFreq.toFixed(1)} Hz</span>
+              <span className="text-xs text-gray-600 tabular-nums">{(1000 / detectedFreq).toFixed(2)} ms / cycle</span>
+            </>
+          )}
+          {!detectedFreq && !silent && <span className="text-xs text-gray-600">signal — no clear pitch</span>}
+          {silent && <span className="text-xs text-gray-700">silence</span>}
+          <span className="text-xs text-gray-700 tabular-nums">rms {rms ? (rms * 100).toFixed(1) : '0.0'}%</span>
+        </div>
+      </div>
+      <svg viewBox={`0 0 ${OSC_W} ${OSC_H}`} width="100%" style={{ display: 'block' }}
+        className="rounded-lg bg-surface border border-border">
+        {/* Zero line */}
+        <line x1={0} y1={OSC_H / 2} x2={OSC_W} y2={OSC_H / 2}
+          stroke="rgba(255,255,255,0.05)" strokeWidth={0.5} />
+        {/* Fill body — close path to the centre line for a filled silhouette */}
+        {path && (
+          <path
+            d={`${path} L${OSC_W},${OSC_H / 2} L0,${OSC_H / 2} Z`}
+            fill={detectedFreq
+              ? 'rgba(168,85,247,0.08)'
+              : silent ? 'none' : 'rgba(90,190,130,0.07)'}
+          />
+        )}
+        {/* Waveform line */}
+        {path && <path d={path} fill="none" stroke={lineColor} strokeWidth={0.9}
+          strokeLinejoin="round" strokeLinecap="round" />}
+        {/* Sine overlay */}
+        {sinePath && <path d={sinePath} fill="none"
+          stroke="rgba(168,85,247,0.28)" strokeWidth={0.9}
+          strokeLinejoin="round" strokeDasharray="5 4" />}
+      </svg>
+    </div>
+  )
+}
+
+// ─── Frequency spectrum ───────────────────────────────────────────────────────
+const SPEC_H   = 130
+const SPEC_F_MIN = 40
+const SPEC_F_MAX = 4000
+const SPEC_LOG   = Math.log(SPEC_F_MAX / SPEC_F_MIN)
+
+// Map a frequency in Hz to an x pixel position (log scale)
+function specX(f, w) {
+  if (f <= SPEC_F_MIN) return 0
+  if (f >= SPEC_F_MAX) return w
+  return w * Math.log(f / SPEC_F_MIN) / SPEC_LOG
+}
+
+const SPEC_GRID = [
+  { label: 'E2', freq: 82.4  },
+  { label: 'C3', freq: 130.8 },
+  { label: 'E3', freq: 164.8 },
+  { label: 'A3', freq: 220   },
+  { label: 'C4', freq: 261.6 },
+  { label: 'E4', freq: 329.6 },
+  { label: 'A4', freq: 440   },
+  { label: 'C5', freq: 523.3 },
+  { label: 'C6', freq: 1046.5},
+  { label: 'C7', freq: 2093  },
+]
+
+function SpectrumPanel({ spectrum, detectedFreq }) {
+  const W = OSC_W
+  let fillPath = '', strokePath = ''
+
+  if (spectrum?.length) {
+    const n    = spectrum.length
+    const pts  = Array.from({ length: n }, (_, i) => {
+      const x = ((i / (n - 1)) * W).toFixed(1)
+      const y = (SPEC_H * (1 - spectrum[i])).toFixed(1)
+      return `${i === 0 ? 'M' : 'L'}${x},${y}`
+    }).join(' ')
+    strokePath = pts
+    fillPath   = pts + ` L${W},${SPEC_H} L0,${SPEC_H} Z`
+  }
+
+  return (
+    <div>
+      <p className="text-xs text-gray-600 uppercase tracking-widest mb-1">
+        Frequency spectrum — 40 Hz → 4 kHz (log scale)
+      </p>
+      <svg viewBox={`0 0 ${W} ${SPEC_H}`} width="100%" style={{ display: 'block' }}
+        className="rounded-lg bg-surface border border-border">
+
+        {/* Note grid lines */}
+        {SPEC_GRID.map(({ label, freq }) => {
+          const x = specX(freq, W).toFixed(1)
+          return (
+            <g key={label}>
+              <line x1={x} y1={0} x2={x} y2={SPEC_H - 14}
+                stroke="rgba(255,255,255,0.06)" strokeWidth={1} />
+              <text x={x} y={SPEC_H - 3} textAnchor="middle" fontSize={7.5}
+                fill="rgba(80,80,95,0.9)">{label}</text>
+            </g>
+          )
+        })}
+
+        {/* Spectrum fill + stroke */}
+        {fillPath && (
+          <>
+            <path d={fillPath} fill="rgba(80,180,130,0.13)" />
+            <path d={strokePath} fill="none" stroke="rgba(90,200,145,0.55)" strokeWidth={0.8} />
+          </>
+        )}
+
+        {/* Fundamental frequency */}
+        {detectedFreq && (() => {
+          const x = specX(detectedFreq, W).toFixed(1)
+          return (
+            <g>
+              <line x1={x} y1={0} x2={x} y2={SPEC_H - 14}
+                stroke="rgba(168,85,247,0.9)" strokeWidth={1.2} />
+              <text x={x} y={11} textAnchor="middle" fontSize={8} fontWeight="700"
+                fill="rgba(168,85,247,0.95)">f</text>
+            </g>
+          )
+        })()}
+
+        {/* Harmonics 2f–5f */}
+        {detectedFreq && [2, 3, 4, 5].map(h => {
+          const hf = detectedFreq * h
+          if (hf > SPEC_F_MAX) return null
+          const x   = specX(hf, W).toFixed(1)
+          const op  = (0.5 - (h - 2) * 0.1).toFixed(2)
+          return (
+            <g key={h}>
+              <line x1={x} y1={0} x2={x} y2={SPEC_H - 14}
+                stroke={`rgba(168,85,247,${op})`} strokeWidth={0.7} strokeDasharray="3 4" />
+              <text x={x} y={11} textAnchor="middle" fontSize={7.5}
+                fill={`rgba(168,85,247,${op})`}>{h}f</text>
+            </g>
+          )
+        })}
+      </svg>
+    </div>
+  )
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
-export default function DebugView({ chroma, chordCandidates, noteAnalysis, keyInfo, currentChord, instrument = 'guitar' }) {
+export default function DebugView({ chroma, chordCandidates, noteAnalysis, waveform, keyInfo, currentChord, instrument = 'guitar' }) {
   const keyPCs   = new Set(keyInfo ? getScale(keyInfo.root, keyInfo.mode).map(n => NOTES.indexOf(n)) : [])
   const chordPCs = new Set(currentChord ? getChordTones(currentChord).map(n => NOTES.indexOf(n)) : [])
 
-  const chromaArr   = chroma       ? [...chroma]       : new Array(12).fill(0)
-  const histFreq    = noteAnalysis ? noteAnalysis.freq  : new Array(12).fill(0)
-  const topKeys     = noteAnalysis ? noteAnalysis.topKeys : []
+  const chromaArr    = chroma       ? [...chroma]            : new Array(12).fill(0)
+  const histFreq     = noteAnalysis ? noteAnalysis.freq       : new Array(12).fill(0)
+  const topKeys      = noteAnalysis ? noteAnalysis.topKeys    : []
+  const totalNotes   = noteAnalysis?.total      ?? 0
+  const sessionSecs  = noteAnalysis?.sessionSecs ?? 0
+  const sessionLabel = sessionSecs >= 60
+    ? `${Math.floor(sessionSecs / 60)}m ${sessionSecs % 60}s`
+    : `${sessionSecs}s`
   const topScore    = chordCandidates[0]?.score ?? 1
   const topKeyScore = topKeys[0]?.score ?? 1
 
@@ -269,7 +486,14 @@ export default function DebugView({ chroma, chordCandidates, noteAnalysis, keyIn
 
         {/* Col 2: Note history piano with % labels */}
         <div>
-          <p className="text-xs text-gray-600 uppercase tracking-widest mb-2">Note history — key evidence</p>
+          <div className="flex items-baseline justify-between mb-2">
+            <p className="text-xs text-gray-600 uppercase tracking-widest">Note history</p>
+            {totalNotes > 0 && (
+              <span className="text-[10px] text-gray-600 tabular-nums">
+                {totalNotes.toLocaleString()} notes · {sessionLabel}
+              </span>
+            )}
+          </div>
           <PianoSVG values={histFreq} keyNotes={keyPCs} chordNotes={chordPCs} keyH={70} showPct={true} />
         </div>
 
@@ -297,6 +521,12 @@ export default function DebugView({ chroma, chordCandidates, noteAnalysis, keyIn
           </div>
         </div>
 
+      </div>
+
+      {/* ── Oscilloscope + spectrum ── */}
+      <div className="flex flex-col gap-3">
+        <Oscilloscope waveform={waveform} />
+        <SpectrumPanel spectrum={waveform?.spectrum} detectedFreq={waveform?.detectedFreq} />
       </div>
     </div>
   )

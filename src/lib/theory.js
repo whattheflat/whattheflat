@@ -360,40 +360,73 @@ export function toRomanNumeral(chordName, keyRoot, keyMode) {
 
 // ─── Repeating progression detection ─────────────────────────────────────────
 
+// Returns true if arr is made of a shorter repeating unit (e.g. [A,B,A,B] → true)
+function isPeriodicPattern(arr) {
+  for (let p = 1; p <= Math.floor(arr.length / 2); p++) {
+    if (arr.length % p !== 0) continue
+    const unit = arr.slice(0, p)
+    if (arr.every((v, i) => v === unit[i % p])) return true
+  }
+  return false
+}
+
+// Returns the lexicographically smallest rotation so the same loop always
+// produces the same string regardless of where in the cycle we currently are.
+function canonicalize(pattern) {
+  let best = pattern
+  for (let i = 1; i < pattern.length; i++) {
+    const rot = [...pattern.slice(i), ...pattern.slice(0, i)]
+    if (rot.join('\0') < best.join('\0')) best = rot
+  }
+  return best
+}
+
 /**
  * detectRepeatingProgression(history) → chord[] or null
- * Returns the most-recently-completed repeating pattern (length 2–6).
- * Uses non-overlapping match counting to avoid over-counting.
+ *
+ * Tests every unique subsequence of every length (not just the tail) so the
+ * result is stable regardless of where in the loop the musician currently is.
+ * Returns the canonical (rotation-normalised) form of the best pattern found.
  */
 export function detectRepeatingProgression(history) {
-  if (!history || history.length < 4) return null
+  if (!history || history.length < 6) return null
 
-  const window = history.slice(-20)
+  const win = history.slice(-32)
   let best = null, bestScore = 0
 
   for (let len = 2; len <= 6; len++) {
-    if (len * 2 > window.length) break
+    if (len * 2 > win.length) break
 
-    const candidate = window.slice(-len)
-    let reps = 0, i = 0
+    const seen = new Set()
 
-    while (i <= window.length - len) {
-      if (candidate.every((c, j) => c === window[i + j])) {
-        reps++
-        i += len  // skip past match — non-overlapping
-      } else {
-        i++
+    for (let start = 0; start <= win.length - len; start++) {
+      const candidate = win.slice(start, start + len)
+      const key = candidate.join('\0')
+      if (seen.has(key)) continue
+      seen.add(key)
+
+      // A pattern that is itself a repetition of something shorter will be
+      // found at that shorter length — skip it here to avoid inflating scores.
+      if (len >= 4 && isPeriodicPattern(candidate)) continue
+
+      let reps = 0, i = 0
+      while (i <= win.length - len) {
+        if (candidate.every((c, j) => c === win[i + j])) { reps++; i += len }
+        else i++
       }
-    }
 
-    const score = reps * len
-    if (reps >= 2 && score > bestScore) {
-      bestScore = score
-      best      = candidate
+      if (reps < 2) continue
+
+      const score = reps * len
+      // Prefer longer patterns on equal score — more descriptive loop wins
+      if (score > bestScore || (score === bestScore && len > (best?.length ?? 0))) {
+        bestScore = score
+        best = candidate
+      }
     }
   }
 
-  return best
+  return best ? canonicalize(best) : null
 }
 
 // ─── Debug / analysis helpers ─────────────────────────────────────────────────
@@ -450,6 +483,7 @@ export function getNoteHistoryAnalysis(noteHistory) {
   }
   return {
     freq:    normalized,
+    total,
     topKeys: candidates.sort((a, b) => b.score - a.score).slice(0, 5),
   }
 }

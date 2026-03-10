@@ -81,7 +81,7 @@ function detectBassPC(freqData, sampleRate, fftSize) {
   return ((bestMidi % 12) + 12) % 12
 }
 
-export default function AudioCapture({ onNote, onChroma, onOnset, isListening, minClarity = 0.80, minVolume = 0.01, onPermissionError }) {
+export default function AudioCapture({ onNote, onChroma, onOnset, onWaveform, isListening, minClarity = 0.80, minVolume = 0.01, onPermissionError }) {
   const audioCtxRef   = useRef(null)
   const timeBufRef    = useRef(null)
   const freqBufRef    = useRef(null)
@@ -94,20 +94,24 @@ export default function AudioCapture({ onNote, onChroma, onOnset, isListening, m
   const onNoteRef            = useRef(onNote)
   const onChromaRef          = useRef(onChroma)
   const onOnsetRef           = useRef(onOnset)
+  const onWaveformRef        = useRef(onWaveform)
   const onPermissionErrorRef = useRef(onPermissionError)
   const minClarityRef        = useRef(minClarity)
   const minVolumeRef         = useRef(minVolume)
   const smoothRmsRef         = useRef(0)
   const lastOnsetRef         = useRef(0)
+  const specPeakRef          = useRef(null)   // peak-hold spectrum for display lingering
   useEffect(() => { onNoteRef.current            = onNote            }, [onNote])
   useEffect(() => { onChromaRef.current          = onChroma          }, [onChroma])
   useEffect(() => { onOnsetRef.current           = onOnset           }, [onOnset])
+  useEffect(() => { onWaveformRef.current        = onWaveform        }, [onWaveform])
   useEffect(() => { onPermissionErrorRef.current = onPermissionError }, [onPermissionError])
   useEffect(() => { minClarityRef.current        = minClarity        }, [minClarity])
   useEffect(() => { minVolumeRef.current         = minVolume         }, [minVolume])
 
   const stop = useCallback(() => {
     activeRef.current = false
+    specPeakRef.current = null
     if (rafRef.current)    { cancelAnimationFrame(rafRef.current); rafRef.current = null }
     if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null }
     if (audioCtxRef.current) { audioCtxRef.current.close(); audioCtxRef.current = null }
@@ -161,6 +165,46 @@ export default function AudioCapture({ onNote, onChroma, onOnset, isListening, m
       if (rms > sr * 2.2 && rms > minVolumeRef.current * 1.5 && nowMs - lastOnsetRef.current > 120) {
         lastOnsetRef.current = nowMs
         onOnsetRef.current?.()
+      }
+
+      // Always fire waveform callback — downsample 4096 → 512 points + log-binned spectrum
+      if (onWaveformRef.current) {
+        const stride = 8   // 4096 / 8 = 512 points
+        const wave = new Float32Array(PITCH_FFT / stride)
+        for (let i = 0; i < wave.length; i++) wave[i] = timeBuf[i * stride]
+
+        // Log-binned frequency spectrum: 256 bins from 40 Hz → 4000 Hz
+        const LOG_BINS = 256
+        const F_MIN = 40, F_MAX = 4000
+        const binHz  = ctx.sampleRate / ca.fftSize
+        const freqBuf = freqBufRef.current
+        ca.getFloatFrequencyData(freqBuf)
+        const spectrum = new Float32Array(LOG_BINS)
+        for (let b = 0; b < LOG_BINS; b++) {
+          const f   = F_MIN * Math.pow(F_MAX / F_MIN, b / (LOG_BINS - 1))
+          const bin = Math.round(f / binHz)
+          if (bin < freqBuf.length) {
+            const db = freqBuf[bin]
+            spectrum[b] = db < NOISE_FLOOR ? 0 : Math.max(0, (db - NOISE_FLOOR) / (-NOISE_FLOOR))
+          }
+        }
+
+        // Peak-hold with exponential decay — spectrum rises instantly, falls slowly
+        if (!specPeakRef.current) specPeakRef.current = new Float32Array(LOG_BINS)
+        const peak = specPeakRef.current
+        for (let b = 0; b < LOG_BINS; b++) {
+          peak[b] = spectrum[b] > peak[b] ? spectrum[b] : peak[b] * 0.92
+        }
+
+        let detectedFreq = null, detectedNote = null
+        if (rms >= minVolumeRef.current) {
+          const [f, c] = detectorRef.current.findPitch(timeBuf, ctx.sampleRate)
+          if (c >= minClarityRef.current && f > 60 && f < 4200) {
+            detectedFreq = f
+            detectedNote = NOTES[((Math.round(12 * Math.log2(f / 440) + 69) % 12) + 12) % 12]
+          }
+        }
+        onWaveformRef.current({ wave, rms, detectedFreq, detectedNote, spectrum: peak })
       }
 
       if (rms >= minVolumeRef.current) {

@@ -55,11 +55,14 @@ export default function App() {
   const [debugChroma,       setDebugChroma]       = useState(null)
   const [debugCandidates,   setDebugCandidates]   = useState([])
   const [debugNoteAnalysis, setDebugNoteAnalysis] = useState(null)
+  const [debugWaveform,     setDebugWaveform]     = useState(null)
 
   // ── Stable refs for values used inside callbacks ──────────────────────────────
-  const showDebugRef  = useRef(showDebug)
-  const lockedKeyRef  = useRef(null)
+  const showDebugRef    = useRef(showDebug)
+  const lockedKeyRef    = useRef(null)
+  const listenStartRef  = useRef(null)
   useEffect(() => { showDebugRef.current = showDebug }, [showDebug])
+  useEffect(() => { if (isListening) listenStartRef.current = Date.now() }, [isListening])
 
   // ── BPM estimation from onset timestamps ─────────────────────────────────────
   const [bpm, setBpm]           = useState(null)
@@ -92,6 +95,7 @@ export default function App() {
   const chromaIdxRef         = useRef(0)
   const chordVotesRef        = useRef([])
   const progressionVoteRef   = useRef(null)
+  const progressionMissRef   = useRef(0)
   const pendingKeyRef        = useRef(null)
 
   // Keep refs in sync
@@ -109,7 +113,16 @@ export default function App() {
   // ── Detect progression — require 2 consecutive identical results to commit ────
   useEffect(() => {
     const detected = detectRepeatingProgression(chordHistory)
-    if (!detected) return
+    if (!detected) {
+      progressionMissRef.current++
+      // Clear stale loop after 4 chord changes with no pattern found
+      if (progressionMissRef.current >= 4) {
+        setDetectedProgression(null)
+        progressionVoteRef.current = null
+      }
+      return
+    }
+    progressionMissRef.current = 0
     const key = detected.join(',')
     if (progressionVoteRef.current === key) {
       setDetectedProgression(detected)
@@ -125,11 +138,13 @@ export default function App() {
     keyVotesRef.current        = []
     chordVotesRef.current      = []
     progressionVoteRef.current = null
+    progressionMissRef.current = 0
     pendingKeyRef.current      = null
     chromaIdxRef.current       = 0
     chromaRingRef.current      = Array.from({ length: cfg.chromaSmooth }, () => new Float32Array(12))
     onsetTimestampsRef.current = []
     bpmSmoothRef.current       = null
+    listenStartRef.current     = Date.now()
     setKeyInfo(null)
     setLockedKey(null)
     effectiveKeyRef.current    = null
@@ -141,6 +156,7 @@ export default function App() {
     setDebugChroma(null)
     setDebugCandidates([])
     setDebugNoteAnalysis(null)
+    setDebugWaveform(null)
   }
 
   // ── Key lock handlers ─────────────────────────────────────────────────────────
@@ -163,6 +179,11 @@ export default function App() {
     effectiveKeyRef.current = keyInfo
   }
 
+  // ── Waveform handler: feeds oscilloscope in debug view ───────────────────────
+  const handleWaveform = useCallback((data) => {
+    if (showDebugRef.current) setDebugWaveform(data)
+  }, [])
+
   // ── Note handler: drives key detection (pitch-based) ──────────────────────────
   const handleNote = useCallback(({ pitchClass }) => {
     const cfg = configRef.current
@@ -174,7 +195,11 @@ export default function App() {
 
     const result = detectKey(history)
     setTopKeyCandidates(detectTopKeys(history))
-    if (showDebugRef.current) setDebugNoteAnalysis(getNoteHistoryAnalysis(history))
+    if (showDebugRef.current) {
+      const analysis = getNoteHistoryAnalysis(history)
+      analysis.sessionSecs = listenStartRef.current ? Math.floor((Date.now() - listenStartRef.current) / 1000) : 0
+      setDebugNoteAnalysis(analysis)
+    }
     if (result.confidence < 0.5) return
 
     const votes = keyVotesRef.current
@@ -226,7 +251,7 @@ export default function App() {
 
     if (showDebugRef.current) {
       setDebugChroma([...avg])
-      setDebugCandidates(getChordCandidates(avg, key, bassPC))
+      setDebugCandidates(getChordCandidates(avg, key, bassPC, 5))
     }
 
     // Stability gate — if chroma is still changing across frames, we're mid-transition.
@@ -256,7 +281,7 @@ export default function App() {
       const winner = votes[0]
       setChordHistory(prev => {
         if (prev[prev.length - 1] === winner) return prev
-        return [...prev.slice(-30), winner]
+        return [...prev.slice(-48), winner]
       })
 
       // Inject chord tones into note history to anchor key detection
@@ -492,6 +517,7 @@ export default function App() {
         onNote={handleNote}
         onChroma={handleChroma}
         onOnset={handleOnset}
+        onWaveform={handleWaveform}
         isListening={isListening}
         minClarity={config.minClarity}
         minVolume={config.minVolume}
@@ -538,6 +564,7 @@ export default function App() {
             chroma={debugChroma}
             chordCandidates={debugCandidates}
             noteAnalysis={debugNoteAnalysis}
+            waveform={debugWaveform}
             keyInfo={effectiveKey}
             currentChord={currentChord}
             instrument={instrument}
