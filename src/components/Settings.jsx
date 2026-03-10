@@ -70,7 +70,19 @@ const SETTINGS = [
   },
 ]
 
-export default function Settings({ config, onChange, onClose, onReset }) {
+import { useRef } from 'react'
+
+export default function Settings({ config, onChange, onClose, onReset, monoColor, onMonoColorChange }) {
+  // Snapshot on mount so Cancel can restore
+  const savedConfig   = useRef(config)
+  const savedMono     = useRef(monoColor)
+
+  function handleCancel() {
+    Object.entries(savedConfig.current).forEach(([k, v]) => onChange(k, v))
+    onMonoColorChange(savedMono.current)
+    onClose()
+  }
+
   return (
     <div className="fixed inset-0 bg-surface z-50 overflow-y-auto">
       <div className="max-w-2xl mx-auto px-6 py-8">
@@ -88,15 +100,41 @@ export default function Settings({ config, onChange, onClose, onReset }) {
               Reset defaults
             </button>
             <button
+              onClick={handleCancel}
+              className="px-4 py-2 rounded-lg text-sm border border-border text-gray-500 hover:text-gray-300 hover:border-gray-400 transition-all"
+            >
+              Cancel
+            </button>
+            <button
               onClick={onClose}
               className="px-5 py-2 rounded-lg text-sm bg-accent hover:bg-purple-600 text-white font-semibold transition-all"
             >
-              Done
+              Save
             </button>
           </div>
         </div>
 
         <div className="space-y-8">
+
+          {/* ── Display ── */}
+          <div>
+            <h3 className="text-xs uppercase tracking-widest text-gray-500 mb-4 border-b border-border pb-2">
+              Display
+            </h3>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-gray-200">Mono Color Mode</p>
+                <p className="text-xs text-gray-600 mt-0.5">Use a single purple palette instead of purple + amber for note tiers.</p>
+              </div>
+              <button
+                onClick={() => onMonoColorChange(v => !v)}
+                className={`relative w-11 h-6 rounded-full transition-colors ${monoColor ? 'bg-accent' : 'bg-gray-700'}`}
+              >
+                <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform ${monoColor ? 'translate-x-5' : 'translate-x-0'}`} />
+              </button>
+            </div>
+          </div>
+
           {SETTINGS.map(section => (
             <div key={section.section}>
               <h3 className="text-xs uppercase tracking-widest text-gray-500 mb-4 border-b border-border pb-2">

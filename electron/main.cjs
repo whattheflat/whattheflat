@@ -23,7 +23,7 @@ function createWindow() {
     height: 900,
     minWidth: 620,
     minHeight: 600,
-    title: 'WhatTheFlat',
+    title: 'WhatTheFlat ♭? - JamBuddy',
     icon: path.join(__dirname, '../assets/whattheflat-logo.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),

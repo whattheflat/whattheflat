@@ -10,7 +10,6 @@ import Settings from './components/Settings'
 import DebugView from './components/DebugView'
 import { NOTES, detectKey, detectTopKeys, matchChordFromChroma, detectRepeatingProgression, getChordTones, getChordCandidates, getNoteHistoryAnalysis } from './lib/theory'
 import settingIcon from './assets/setting-icon.png'
-import viewIcon from './assets/view.png'
 
 const DEFAULTS = {
   // Key detection
@@ -27,11 +26,16 @@ const DEFAULTS = {
   minVolume:          0.01,
 }
 
+function loadStored(key, fallback) {
+  try { const v = localStorage.getItem(key); return v !== null ? JSON.parse(v) : fallback }
+  catch { return fallback }
+}
+
 export default function App() {
   // ── Config ───────────────────────────────────────────────────────────────────
-  const [config, setConfig] = useState(DEFAULTS)
-  const configRef = useRef(DEFAULTS)
-  useEffect(() => { configRef.current = config }, [config])
+  const [config, setConfig] = useState(() => ({ ...DEFAULTS, ...loadStored('wtf_config', {}) }))
+  const configRef = useRef(config)
+  useEffect(() => { configRef.current = config; localStorage.setItem('wtf_config', JSON.stringify(config)) }, [config])
 
   const [showSettings, setShowSettings] = useState(false)
 
@@ -43,10 +47,10 @@ export default function App() {
   const [isListening, setIsListening] = useState(false)
 
   // ── Instrument view + tuner ───────────────────────────────────────────────────
-  const [instrument, setInstrument] = useState('guitar')  // 'guitar' | 'bass' | 'piano'
+  const [instrument, setInstrument] = useState('piano')  // 'piano' | 'guitar' | 'bass'
   const [showTuner, setShowTuner]   = useState(false)
   const [showDebug, setShowDebug]   = useState(false)
-  const [monoColor, setMonoColor]   = useState(false)
+  const [monoColor, setMonoColor]   = useState(() => loadStored('wtf_monoColor', false))
 
   // ── Mic permission error ──────────────────────────────────────────────────────
   const [micError, setMicError] = useState(null)
@@ -62,6 +66,7 @@ export default function App() {
   const lockedKeyRef    = useRef(null)
   const listenStartRef  = useRef(null)
   useEffect(() => { showDebugRef.current = showDebug }, [showDebug])
+  useEffect(() => { localStorage.setItem('wtf_monoColor', JSON.stringify(monoColor)) }, [monoColor])
   useEffect(() => { if (isListening) listenStartRef.current = Date.now() }, [isListening])
 
   // ── BPM estimation from onset timestamps ─────────────────────────────────────
@@ -262,10 +267,7 @@ export default function App() {
       for (const frame of ring) { const d = frame[i] - avg[i]; v += d * d }
       if (v / cfg.chromaSmooth > maxVar) maxVar = v / cfg.chromaSmooth
     }
-    if (maxVar > 0.05) {
-      chordVotesRef.current = []
-      return
-    }
+    if (maxVar > 0.05) return
 
     const chord = matchChordFromChroma(avg, key, bassPC, false, cfg.chordMinScore)
     if (!chord) {
@@ -348,7 +350,9 @@ export default function App() {
         config={config}
         onChange={updateConfig}
         onClose={() => setShowSettings(false)}
-        onReset={() => setConfig(DEFAULTS)}
+        onReset={() => { setConfig(DEFAULTS); setMonoColor(false) }}
+        monoColor={monoColor}
+        onMonoColorChange={setMonoColor}
       />
     )
   }
@@ -360,28 +364,11 @@ export default function App() {
       <header className="mb-2 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-accent">
-            WhatTheFlat <span className="text-gray-600">&#9837;?</span>
+            WhatTheFlat <span className="text-gray-600">&#9837;?</span> <span className="text-amber-400">- JamBuddy</span>
           </h1>
           <p className="text-xs text-gray-600">Real-time key detection for live jams</p>
         </div>
         <div className="flex gap-2 items-center">
-          <button
-            onClick={() => setMonoColor(v => !v)}
-            className={`p-2 rounded-full border transition-all ${monoColor ? 'border-accent bg-accent/10' : 'border-border hover:border-gray-400'}`}
-            title="Mono color mode"
-          >
-            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" style={{ opacity: 0.75 }}>
-              <circle cx="6"  cy="10" r="4" fill={monoColor ? '#a855f7' : '#a855f7'} />
-              <circle cx="13" cy="10" r="4" fill={monoColor ? '#c084fc' : '#f59e0b'} />
-            </svg>
-          </button>
-          <button
-            onClick={() => setShowDebug(v => !v)}
-            className={`p-2 rounded-full border transition-all ${showDebug ? 'border-accent bg-accent/10' : 'border-border hover:border-gray-400'}`}
-            title="Behind the scenes"
-          >
-            <img src={viewIcon} alt="Debug view" className="w-5 h-5" style={{ filter: 'invert(1) opacity(0.75)' }} />
-          </button>
           <button
             onClick={() => setShowSettings(true)}
             className="p-2 rounded-full border border-border hover:border-gray-400 transition-all"
@@ -419,9 +406,9 @@ export default function App() {
             onChange={e => setInstrument(e.target.value)}
             className="appearance-none bg-surface border border-border hover:border-gray-500 focus:border-accent focus:outline-none rounded-lg pl-3 pr-7 py-1 text-sm text-gray-200 cursor-pointer transition-colors"
           >
+            <option value="piano">Piano</option>
             <option value="guitar">Guitar</option>
             <option value="bass">Bass</option>
-            <option value="piano">Piano</option>
           </select>
           <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 text-xs">▾</span>
         </div>
@@ -557,31 +544,41 @@ export default function App() {
         </div>
       </div>
 
-      {/* ── Behind the scenes debug view ── */}
-      {showDebug && (
-        <div className="mb-3">
-          <DebugView
-            chroma={debugChroma}
-            chordCandidates={debugCandidates}
-            noteAnalysis={debugNoteAnalysis}
-            waveform={debugWaveform}
-            keyInfo={effectiveKey}
-            currentChord={currentChord}
-            instrument={instrument}
-          />
-        </div>
-      )}
+      {/* ── Behind the scenes — collapsible ── */}
+      <div className="mb-3 bg-panel border border-border rounded-xl overflow-hidden">
+        <button
+          onClick={() => setShowDebug(v => !v)}
+          className="w-full flex items-center justify-between px-4 py-2 text-sm text-gray-400 hover:text-gray-200 transition-all"
+        >
+          <span>BEHIND THE SCENES</span>
+          <span>{showDebug ? '▲' : '▼'}</span>
+        </button>
+        {showDebug && (
+          <div className="border-t border-border p-4">
+            <DebugView
+              chroma={debugChroma}
+              chordCandidates={debugCandidates}
+              noteAnalysis={debugNoteAnalysis}
+              waveform={debugWaveform}
+              keyInfo={effectiveKey}
+              currentChord={currentChord}
+              instrument={instrument}
+              monoColor={monoColor}
+            />
+          </div>
+        )}
+      </div>
 
       {/* ── Tuner — collapsible ── */}
-      <div>
+      <div className="bg-panel border border-border rounded-xl overflow-hidden">
         <button
           onClick={() => setShowTuner(v => !v)}
-          className="w-full flex items-center justify-between px-4 py-2 bg-panel border border-border rounded-xl text-sm text-gray-400 hover:text-gray-200 hover:border-gray-500 transition-all"
+          className="w-full flex items-center justify-between px-4 py-2 text-sm text-gray-400 hover:text-gray-200 transition-all"
         >
-          <span>Tuner</span>
+          <span>TUNER</span>
           <span>{showTuner ? '▲' : '▼'}</span>
         </button>
-        {showTuner && <div className="mt-2"><Tuner /></div>}
+        {showTuner && <div className="border-t border-border"><Tuner /></div>}
       </div>
     </div>
   )

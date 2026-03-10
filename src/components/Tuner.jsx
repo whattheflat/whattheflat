@@ -108,17 +108,14 @@ export default function Tuner() {
 
 
   return (
-    <div className="p-6 bg-panel border border-border rounded-xl text-center">
-      <div className="flex items-start justify-between mb-4">
-        <h3 className="text-lg font-semibold">Tuner</h3>
-        <div>
-          <button
-            onClick={() => (isListening ? stopListening() : startListening())}
-            className={`px-4 py-2 rounded-full text-sm font-semibold ${isListening ? 'bg-red-600' : 'bg-accent'}`}
-          >
-            {isListening ? 'Stop' : 'Start'}
-          </button>
-        </div>
+    <div className="p-6 text-center">
+      <div className="flex items-start justify-end mb-4">
+        <button
+          onClick={() => (isListening ? stopListening() : startListening())}
+          className={`px-4 py-2 rounded-full text-sm font-semibold ${isListening ? 'bg-red-600' : 'bg-accent'}`}
+        >
+          {isListening ? 'Stop' : 'Start'}
+        </button>
       </div>
 
       <div className="w-full flex flex-col items-center">

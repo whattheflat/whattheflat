@@ -417,9 +417,8 @@ export function detectRepeatingProgression(history) {
 
       if (reps < 2) continue
 
-      const score = reps * len
-      // Prefer longer patterns on equal score — more descriptive loop wins
-      if (score > bestScore || (score === bestScore && len > (best?.length ?? 0))) {
+      const score = reps * len * len  // square length — prevents sub-patterns from beating full loop
+      if (score > bestScore) {
         bestScore = score
         best = candidate
       }

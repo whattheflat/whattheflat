@@ -1,3 +1,4 @@
+import { useRef } from 'react'
 import { getScale, getChordTones, NOTES } from '../lib/theory'
 
 // ─── SVG Piano — 2 octaves (C3–B4) ───────────────────────────────────────────
@@ -14,7 +15,7 @@ const BLACK_OCT = [
 ]
 const WHITE_LABELS = ['C3','D3','E3','F3','G3','A3','B3','C4','D4','E4','F4','G4','A4','B4']
 
-function PianoSVG({ values, keyNotes, chordNotes, keyH = KEY_H, showPct = false }) {
+function PianoSVG({ values, keyNotes, chordNotes, keyH = KEY_H, showPct = false, monoColor = false }) {
   const max = Math.max(...values, 0.01)
   const wKeys = []
   const bKeys = []
@@ -35,7 +36,7 @@ function PianoSVG({ values, keyNotes, chordNotes, keyH = KEY_H, showPct = false 
         const fillColor = inChord
           ? `rgba(167,139,250,${0.12 + energy * 0.88})`
           : inKey
-          ? `rgba(251,191,36,${0.1 + energy * 0.7})`
+          ? monoColor ? `rgba(192,132,252,${0.1 + energy * 0.7})` : `rgba(251,191,36,${0.1 + energy * 0.7})`
           : `rgba(180,180,190,${0.05 + energy * 0.2})`
         const pct = showPct ? Math.round(values[pc] * 100) : 0
 
@@ -55,7 +56,7 @@ function PianoSVG({ values, keyNotes, chordNotes, keyH = KEY_H, showPct = false 
             </text>
             {showPct && pct > 0 && (
               <text x={x + KEY_W/2} y={keyH + 14} textAnchor="middle" fontSize={8}
-                fill={inKey ? 'rgb(251,191,36)' : 'rgba(100,100,110,0.8)'}>
+                fill={inKey ? (monoColor ? 'rgb(192,132,252)' : 'rgb(251,191,36)') : 'rgba(100,100,110,0.8)'}>
                 {pct}%
               </text>
             )}
@@ -72,7 +73,7 @@ function PianoSVG({ values, keyNotes, chordNotes, keyH = KEY_H, showPct = false 
         const fillColor = inChord
           ? 'rgba(139,92,246,0.9)'
           : inKey
-          ? 'rgba(180,130,0,0.85)'
+          ? monoColor ? 'rgba(192,132,252,0.85)' : 'rgba(180,130,0,0.85)'
           : 'rgba(70,70,80,0.75)'
         const pct = showPct ? Math.round(values[pc] * 100) : 0
 
@@ -130,7 +131,7 @@ const MF_H = MF_PAD_T + 5 * MF_STR_H + MF_PAD_B
 const mfFretX   = f  => MF_NUT_X + (f - 0.5) * MF_FRET_W
 const mfStringY = si => MF_PAD_T + si * MF_STR_H
 
-function MiniFretboard({ values, keyNotes, chordNotes }) {
+function MiniFretboard({ values, keyNotes, chordNotes, monoColor = false }) {
   const max = Math.max(...values, 0.01)
 
   return (
@@ -198,8 +199,8 @@ function MiniFretboard({ values, keyNotes, chordNotes }) {
             fill = `rgba(168,85,247,${0.3 + energy * 0.7})`
             textFill = '#fff'
           } else if (inKey) {
-            fill = `rgba(245,158,11,${0.2 + energy * 0.75})`
-            textFill = 'rgba(0,0,0,0.85)'
+            fill = monoColor ? `rgba(192,132,252,${0.2 + energy * 0.75})` : `rgba(245,158,11,${0.2 + energy * 0.75})`
+            textFill = monoColor ? '#fff' : 'rgba(0,0,0,0.85)'
           } else {
             fill = `rgba(100,100,120,${energy * 0.7})`
             textFill = 'rgba(180,180,190,0.7)'
@@ -209,7 +210,7 @@ function MiniFretboard({ values, keyNotes, chordNotes }) {
             <g key={`${si}-${fi}`}>
               {energy > 0.3 && (inChord || inKey) && (
                 <circle cx={cx} cy={cy} r={MF_DOT_R + 4}
-                  fill={inChord ? 'rgba(168,85,247,0.25)' : 'rgba(245,158,11,0.2)'}
+                  fill={inChord ? 'rgba(168,85,247,0.25)' : monoColor ? 'rgba(192,132,252,0.2)' : 'rgba(245,158,11,0.2)'}
                   style={{ filter: 'blur(4px)' }} />
               )}
               <circle cx={cx} cy={cy} r={MF_DOT_R} fill={fill} />
@@ -232,13 +233,34 @@ function Oscilloscope({ waveform }) {
   const { wave, rms, detectedFreq, detectedNote } = waveform || {}
   const silent = !rms || rms < 0.005
 
+  // ── Note scroll history — last 5 distinct notes ───────────────────────────
+  const noteHistoryRef = useRef([])   // [{ note, freq, id }, ...] oldest first
+  const lastNoteRef    = useRef(null)
+  const noteIdRef      = useRef(0)
+  const lastDisplayRef = useRef(null) // last detected note shown in header — never flickers
+  if (detectedNote && detectedNote !== lastNoteRef.current) {
+    lastNoteRef.current = detectedNote
+    lastDisplayRef.current = { note: detectedNote, freq: detectedFreq }
+    noteHistoryRef.current.push({ note: detectedNote, freq: detectedFreq, id: noteIdRef.current++ })
+    if (noteHistoryRef.current.length > 5) noteHistoryRef.current.shift()
+  } else if (detectedFreq && detectedNote) {
+    lastDisplayRef.current = { note: detectedNote, freq: detectedFreq }
+  }
+
+  // ── Ghost waveform — holds the last clear-pitch shape, fades slowly ───────
+  const ghostRef = useRef({ path: '', fill: '', opacity: 0 })
+  if (detectedFreq) {
+    ghostRef.current = { path: '', fill: '', opacity: 1 }   // will be filled below
+  } else {
+    ghostRef.current = { ...ghostRef.current, opacity: ghostRef.current.opacity * 0.97 }
+  }
+
   let path = '', sinePath = ''
   if (wave?.length) {
     const mid     = OSC_H / 2
     const waveAmp = Math.max(...wave.map(Math.abs), 0.001)
     const gain    = Math.min((OSC_H * 0.44) / waveAmp, OSC_H * 0.44)
 
-    // Zero-crossing trigger: find first upward zero cross in first half → stable display
     const lo = Math.floor(wave.length / 4)
     const hi = Math.floor(wave.length / 2)
     let offset = lo
@@ -253,9 +275,13 @@ function Oscilloscope({ waveform }) {
       return `${i === 0 ? 'M' : 'L'}${(i * step).toFixed(1)},${(mid - v * gain).toFixed(1)}`
     }).join(' ')
 
-    // Sine overlay at the detected fundamental, phase-matched to trigger offset
+    // Capture ghost path when we have a clear pitch
     if (detectedFreq) {
+      ghostRef.current.path = path
+      ghostRef.current.fill = path + ` L${OSC_W},${mid} L0,${mid} Z`
+    }
 
+    if (detectedFreq) {
       const effectiveSR = 44100 / 8
       const sineAmp = Math.min(waveAmp * gain * 0.55, OSC_H * 0.38)
       sinePath = Array.from({ length: 300 }, (_, i) => {
@@ -272,19 +298,23 @@ function Oscilloscope({ waveform }) {
     ? 'rgba(168,85,247,0.9)'
     : silent ? 'rgba(50,50,60,0.8)' : 'rgba(100,200,140,0.75)'
 
+  const ghost       = ghostRef.current
+  const ghostOp     = ghost.opacity
+  const noteHistory = noteHistoryRef.current
+  const lastDisplay = lastDisplayRef.current
+
   return (
     <div>
       <div className="flex items-center justify-between mb-1">
         <p className="text-xs text-gray-600 uppercase tracking-widest">Oscilloscope — raw mic input</p>
         <div className="flex items-center gap-3">
-          {detectedFreq && detectedNote && (
+          {lastDisplay && (
             <>
-              <span className="text-xs font-bold text-accent">{detectedNote}</span>
-              <span className="text-xs text-gray-500 tabular-nums">{detectedFreq.toFixed(1)} Hz</span>
-              <span className="text-xs text-gray-600 tabular-nums">{(1000 / detectedFreq).toFixed(2)} ms / cycle</span>
+              <span className={`text-xs font-bold ${detectedFreq ? 'text-accent' : 'text-gray-500'}`}>{lastDisplay.note}</span>
+              <span className="text-xs text-gray-500 tabular-nums">{lastDisplay.freq.toFixed(1)} Hz</span>
+              <span className="text-xs text-gray-600 tabular-nums">{(1000 / lastDisplay.freq).toFixed(2)} ms / cycle</span>
             </>
           )}
-          {!detectedFreq && !silent && <span className="text-xs text-gray-600">signal — no clear pitch</span>}
           {silent && <span className="text-xs text-gray-700">silence</span>}
           <span className="text-xs text-gray-700 tabular-nums">rms {rms ? (rms * 100).toFixed(1) : '0.0'}%</span>
         </div>
@@ -294,7 +324,18 @@ function Oscilloscope({ waveform }) {
         {/* Zero line */}
         <line x1={0} y1={OSC_H / 2} x2={OSC_W} y2={OSC_H / 2}
           stroke="rgba(255,255,255,0.05)" strokeWidth={0.5} />
-        {/* Fill body — close path to the centre line for a filled silhouette */}
+
+        {/* Ghost waveform — previous clear-pitch shape fading out */}
+        {ghost.path && ghostOp > 0.04 && !detectedFreq && (
+          <>
+            <path d={ghost.fill} fill={`rgba(168,85,247,${(ghostOp * 0.06).toFixed(3)})`} />
+            <path d={ghost.path} fill="none"
+              stroke={`rgba(150,120,200,${(ghostOp * 0.35).toFixed(3)})`}
+              strokeWidth={0.8} strokeLinejoin="round" strokeLinecap="round" />
+          </>
+        )}
+
+        {/* Fill body */}
         {path && (
           <path
             d={`${path} L${OSC_W},${OSC_H / 2} L0,${OSC_H / 2} Z`}
@@ -310,6 +351,28 @@ function Oscilloscope({ waveform }) {
         {sinePath && <path d={sinePath} fill="none"
           stroke="rgba(168,85,247,0.28)" strokeWidth={0.9}
           strokeLinejoin="round" strokeDasharray="5 4" />}
+
+        {/* Scrolling note history — newest on right, slides left on each new note */}
+        {noteHistory.map((entry, i) => {
+          const age   = noteHistory.length - 1 - i   // 0 = newest
+          const x     = OSC_W - 28 - age * 100
+          const op    = (1 - age * 0.18).toFixed(2)
+          const isNew = age === 0
+          return (
+            <g key={entry.id}
+              style={{ transform: `translateX(${x}px)`, transition: 'transform 0.45s cubic-bezier(0.4,0,0.2,1)' }}>
+              <text x={0} y={OSC_H - 18} textAnchor="middle"
+                fontSize={isNew ? 13 : 11} fontWeight={isNew ? '700' : '400'}
+                fill={isNew ? `rgba(168,85,247,${op})` : `rgba(160,130,210,${op})`}>
+                {entry.note}
+              </text>
+              <text x={0} y={OSC_H - 7} textAnchor="middle" fontSize={7}
+                fill={`rgba(120,100,160,${(parseFloat(op) * 0.7).toFixed(2)})`}>
+                {entry.freq ? entry.freq.toFixed(0) : ''}Hz
+              </text>
+            </g>
+          )
+        })}
       </svg>
     </div>
   )
@@ -343,17 +406,49 @@ const SPEC_GRID = [
 
 function SpectrumPanel({ spectrum, detectedFreq }) {
   const W = OSC_W
-  let fillPath = '', strokePath = ''
+  const ghostRef    = useRef(null)
+  const ghostFreqRef = useRef(null)  // { freq, opacity }
+
+  // Ghost frequency lines — lock on detection, decay slowly when gone
+  if (detectedFreq) {
+    ghostFreqRef.current = { freq: detectedFreq, opacity: 1 }
+  } else if (ghostFreqRef.current) {
+    ghostFreqRef.current = { freq: ghostFreqRef.current.freq, opacity: ghostFreqRef.current.opacity * 0.97 }
+  }
+  const ghostFreq    = ghostFreqRef.current?.opacity > 0.04 ? ghostFreqRef.current.freq : null
+  const ghostOpacity = ghostFreqRef.current?.opacity ?? 0
+
+  // Ghost: rises instantly with signal, decays very slowly — lingers as grey
+  if (spectrum?.length) {
+    if (!ghostRef.current) ghostRef.current = new Float32Array(spectrum.length)
+    const ghost = ghostRef.current
+    for (let i = 0; i < spectrum.length; i++) {
+      ghost[i] = spectrum[i] > ghost[i] ? spectrum[i] : ghost[i] * 0.988
+    }
+  }
+
+  let fillPath = '', strokePath = '', ghostFill = '', ghostStroke = ''
 
   if (spectrum?.length) {
-    const n    = spectrum.length
-    const pts  = Array.from({ length: n }, (_, i) => {
+    const n = spectrum.length
+    const pts = Array.from({ length: n }, (_, i) => {
       const x = ((i / (n - 1)) * W).toFixed(1)
       const y = (SPEC_H * (1 - spectrum[i])).toFixed(1)
       return `${i === 0 ? 'M' : 'L'}${x},${y}`
     }).join(' ')
     strokePath = pts
     fillPath   = pts + ` L${W},${SPEC_H} L0,${SPEC_H} Z`
+
+    const ghost = ghostRef.current
+    if (ghost) {
+      const gpts = Array.from({ length: n }, (_, i) => {
+        const x = ((i / (n - 1)) * W).toFixed(1)
+        const y = (SPEC_H * (1 - ghost[i])).toFixed(1)
+        return `${i === 0 ? 'M' : 'L'}${x},${y}`
+      }).join(' ')
+      ghostStroke = gpts
+      ghostFill   = gpts + ` L${W},${SPEC_H} L0,${SPEC_H} Z`
+    }
   }
 
   return (
@@ -377,7 +472,15 @@ function SpectrumPanel({ spectrum, detectedFreq }) {
           )
         })}
 
-        {/* Spectrum fill + stroke */}
+        {/* Ghost — slow-decaying grey residue from previous peaks */}
+        {ghostFill && (
+          <>
+            <path d={ghostFill} fill="rgba(120,120,130,0.08)" />
+            <path d={ghostStroke} fill="none" stroke="rgba(130,130,145,0.30)" strokeWidth={0.7} />
+          </>
+        )}
+
+        {/* Live spectrum fill + stroke */}
         {fillPath && (
           <>
             <path d={fillPath} fill="rgba(80,180,130,0.13)" />
@@ -385,31 +488,43 @@ function SpectrumPanel({ spectrum, detectedFreq }) {
           </>
         )}
 
-        {/* Fundamental frequency */}
-        {detectedFreq && (() => {
-          const x = specX(detectedFreq, W).toFixed(1)
-          return (
-            <g>
-              <line x1={x} y1={0} x2={x} y2={SPEC_H - 14}
-                stroke="rgba(168,85,247,0.9)" strokeWidth={1.2} />
-              <text x={x} y={11} textAnchor="middle" fontSize={8} fontWeight="700"
-                fill="rgba(168,85,247,0.95)">f</text>
-            </g>
-          )
-        })()}
-
-        {/* Harmonics 2f–5f */}
-        {detectedFreq && [2, 3, 4, 5].map(h => {
-          const hf = detectedFreq * h
+        {/* Fundamental + harmonics */}
+        {ghostFreq && [1, 2, 3, 4, 5].map(h => {
+          const hf = ghostFreq * h
           if (hf > SPEC_F_MAX) return null
-          const x   = specX(hf, W).toFixed(1)
-          const op  = (0.5 - (h - 2) * 0.1).toFixed(2)
+          const xNum  = specX(hf, W)
+          const x     = xNum.toFixed(1)
+          const midi  = Math.round(12 * Math.log2(hf / 440) + 69)
+          const note  = NOTES[((midi % 12) + 12) % 12]
+          const oct   = Math.floor(midi / 12) - 1
+          // Place label left of line near the right edge, right of line elsewhere
+          const labelX  = xNum > W - 40 ? xNum - 3 : xNum + 3
+          const anchor  = xNum > W - 40 ? 'end' : 'start'
+
+          if (h === 1) {
+            const op     = (0.9 * ghostOpacity).toFixed(3)
+            const textOp = (ghostOpacity * 0.95).toFixed(3)
+            return (
+              <g key={h}>
+                <line x1={x} y1={0} x2={x} y2={SPEC_H - 14}
+                  stroke={`rgba(168,85,247,${op})`} strokeWidth={1.2} />
+                <text x={labelX} y={10} textAnchor={anchor} fontSize={8} fontWeight="700"
+                  fill={`rgba(168,85,247,${textOp})`}>{note}{oct}</text>
+                <text x={labelX} y={20} textAnchor={anchor} fontSize={7}
+                  fill={`rgba(168,85,247,${(ghostOpacity * 0.55).toFixed(3)})`}>f</text>
+              </g>
+            )
+          }
+
+          const op = ((0.5 - (h - 2) * 0.1) * ghostOpacity).toFixed(3)
           return (
             <g key={h}>
               <line x1={x} y1={0} x2={x} y2={SPEC_H - 14}
                 stroke={`rgba(168,85,247,${op})`} strokeWidth={0.7} strokeDasharray="3 4" />
-              <text x={x} y={11} textAnchor="middle" fontSize={7.5}
-                fill={`rgba(168,85,247,${op})`}>{h}f</text>
+              <text x={labelX} y={10} textAnchor={anchor} fontSize={7.5}
+                fill={`rgba(168,85,247,${op})`}>{note}{oct}</text>
+              <text x={labelX} y={19} textAnchor={anchor} fontSize={7}
+                fill={`rgba(168,85,247,${(parseFloat(op) * 0.7).toFixed(3)})`}>{h}f</text>
             </g>
           )
         })}
@@ -419,7 +534,7 @@ function SpectrumPanel({ spectrum, detectedFreq }) {
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
-export default function DebugView({ chroma, chordCandidates, noteAnalysis, waveform, keyInfo, currentChord, instrument = 'guitar' }) {
+export default function DebugView({ chroma, chordCandidates, noteAnalysis, waveform, keyInfo, currentChord, instrument = 'guitar', monoColor = false }) {
   const keyPCs   = new Set(keyInfo ? getScale(keyInfo.root, keyInfo.mode).map(n => NOTES.indexOf(n)) : [])
   const chordPCs = new Set(currentChord ? getChordTones(currentChord).map(n => NOTES.indexOf(n)) : [])
 
@@ -435,15 +550,13 @@ export default function DebugView({ chroma, chordCandidates, noteAnalysis, wavef
   const topKeyScore = topKeys[0]?.score ?? 1
 
   return (
-    <div className="bg-panel border border-border rounded-2xl p-4 flex flex-col gap-4">
-      <p className="text-xs text-gray-500 uppercase tracking-widest shrink-0">Behind the Scenes</p>
-
-      {/* ── Live chroma visualization (instrument-synced) ── */}
+    <div className="flex flex-col gap-4">
+{/* ── Live chroma visualization (instrument-synced) ── */}
       <div>
         <p className="text-xs text-gray-600 uppercase tracking-widest mb-2">Live chroma — what the engine hears right now</p>
         {instrument === 'guitar'
-          ? <MiniFretboard values={chromaArr} keyNotes={keyPCs} chordNotes={chordPCs} />
-          : <PianoSVG values={chromaArr} keyNotes={keyPCs} chordNotes={chordPCs} keyH={90} />
+          ? <MiniFretboard values={chromaArr} keyNotes={keyPCs} chordNotes={chordPCs} monoColor={monoColor} />
+          : <PianoSVG values={chromaArr} keyNotes={keyPCs} chordNotes={chordPCs} keyH={90} monoColor={monoColor} />
         }
       </div>
 
@@ -494,7 +607,7 @@ export default function DebugView({ chroma, chordCandidates, noteAnalysis, wavef
               </span>
             )}
           </div>
-          <PianoSVG values={histFreq} keyNotes={keyPCs} chordNotes={chordPCs} keyH={70} showPct={true} />
+          <PianoSVG values={histFreq} keyNotes={keyPCs} chordNotes={chordPCs} keyH={70} showPct={true} monoColor={monoColor} />
         </div>
 
         {/* Col 3: Key candidates */}
