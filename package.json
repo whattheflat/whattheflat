@@ -1,7 +1,7 @@
 {
   "name": "jambuddy",
   "description": "A jam session companion app that provides a chromatic tuner, chord progressions, and more.",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "private": true,
   "type": "module",
   "main": "electron/main.cjs",

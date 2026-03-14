@@ -70,6 +70,42 @@ npm run electron:build:linux
 
 Output is placed in `frontend/release/`.
 
+## Releasing / Tagging
+
+To create a GitHub release and trigger the CI build pipeline, create an annotated tag and push it to origin. The release workflow runs on tags matching `v*` (for example `v0.6.1`).
+
+Local tagging example:
+
+```bash
+# update package.json version first if desired
+git tag -a v0.6.1 -m "Release v0.6.1"
+git push origin v0.6.1
+```
+
+What the GitHub Action does (`.github/workflows/release.yml`):
+
+- Listens for pushed tags `v*` and runs a matrix build across Windows, macOS and Linux.
+- macOS is built as a universal binary (`--universal`) so a single DMG supports both Intel and Apple Silicon.
+- Each matrix job builds the installer using `electron-builder`, uploads its artifacts, and a final `publish` job aggregates all artifacts into one GitHub release.
+
+If you prefer to run builds locally before tagging, use the npm scripts in the repository root:
+
+```bash
+# Windows NSIS
+npm run electron:build:win
+
+# macOS DMG (universal)
+npm run electron:build:mac -- --universal
+
+# Linux AppImage
+npm run electron:build:linux
+```
+
+CI notes / troubleshooting
+- The workflow uploads artifacts from `release/` into the release. Ensure `package.json` build `directories.output` matches the workflow's expected `release/` folder.
+- If mac packaging for x64 on ARM-hosted runners fails, switch to `--universal` (already configured) or build x64 on an Intel runner.
+- To test the workflow locally, consider using `nektos/act` or push a temporary tag like `vtest`.
+
 ## Design Tokens
 
 All colors are defined in `frontend/tailwind.config.js` and can be referenced by name in any component.
