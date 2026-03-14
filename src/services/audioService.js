@@ -78,7 +78,17 @@ export function useAudioTuner() {
   const startListening = async () => {
     if (isListening) return
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      // Read saved device selection from config (if present)
+      let deviceId = null
+      try {
+        const cfg = JSON.parse(localStorage.getItem('wtf_config') || '{}')
+        deviceId = cfg.audioDeviceId || null
+      } catch (e) {
+        // ignore
+      }
+      const constraints = deviceId ? { audio: { deviceId: { exact: deviceId } } } : { audio: true }
+      console.log('Tuner requesting getUserMedia with', constraints)
+      const stream = await navigator.mediaDevices.getUserMedia(constraints)
       const ctx = new (window.AudioContext || window.webkitAudioContext)()
       const analyser = ctx.createAnalyser()
       analyser.fftSize = 4096

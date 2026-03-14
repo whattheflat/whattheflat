@@ -81,7 +81,7 @@ function detectBassPC(freqData, sampleRate, fftSize) {
   return ((bestMidi % 12) + 12) % 12
 }
 
-export default function AudioCapture({ onNote, onChroma, onOnset, onWaveform, isListening, minClarity = 0.80, minVolume = 0.01, onPermissionError }) {
+export default function AudioCapture({ onNote, onChroma, onOnset, onWaveform, isListening, minClarity = 0.80, minVolume = 0.01, onPermissionError, audioDeviceId = null }) {
   const audioCtxRef   = useRef(null)
   const timeBufRef    = useRef(null)
   const freqBufRef    = useRef(null)
@@ -121,8 +121,34 @@ export default function AudioCapture({ onNote, onChroma, onOnset, onWaveform, is
     stop()
     let stream
     try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      // Helpful debug: list available media devices before requesting permission
+      try {
+        if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+          const devices = await navigator.mediaDevices.enumerateDevices()
+          const audioIns = devices.filter(d => d.kind === 'audioinput')
+          console.log('Audio inputs available:', audioIns)
+        }
+      } catch (e) {
+        console.warn('enumerateDevices failed', e)
+      }
+
+      const constraints = audioDeviceId
+        ? { audio: { deviceId: { exact: audioDeviceId } } }
+        : { audio: true }
+
+      console.log('Requesting getUserMedia with constraints:', constraints)
+      stream = await navigator.mediaDevices.getUserMedia(constraints)
     } catch (err) {
+      // If permission denied or other error, surface extra diagnostics when possible
+      console.warn('getUserMedia failed', err)
+      try {
+        if (navigator.permissions && navigator.permissions.query) {
+          const p = await navigator.permissions.query({ name: 'microphone' })
+          console.log('microphone permission state:', p.state)
+        }
+      } catch (e) {
+        // ignore; not all environments support Permissions API for microphone
+      }
       onPermissionErrorRef.current?.(err)
       return
     }
@@ -134,6 +160,14 @@ export default function AudioCapture({ onNote, onChroma, onOnset, onWaveform, is
     const ctx = new AudioContext()
     audioCtxRef.current = ctx
     const source = ctx.createMediaStreamSource(stream)
+
+    // Debug: log the acquired audio tracks and labels/deviceIds
+    try {
+      const tracks = stream.getAudioTracks()
+      console.log('Acquired audio tracks:', tracks.map(t => ({ label: t.label, id: t.id, enabled: t.enabled, muted: t.muted })))
+    } catch (e) {
+      console.warn('Could not inspect stream tracks', e)
+    }
 
     // Small analyser — pitch detection needs fast time-domain data
     const pa = ctx.createAnalyser()

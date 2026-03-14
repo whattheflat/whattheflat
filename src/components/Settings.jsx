@@ -1,3 +1,5 @@
+import { useRef, useEffect, useState } from 'react'
+
 const SETTINGS = [
   {
     section: 'Chord Detection',
@@ -70,17 +72,50 @@ const SETTINGS = [
   },
 ]
 
-import { useRef } from 'react'
-
 export default function Settings({ config, onChange, onClose, onReset, monoColor, onMonoColorChange }) {
   // Snapshot on mount so Cancel can restore
-  const savedConfig   = useRef(config)
-  const savedMono     = useRef(monoColor)
+  const savedConfig = useRef(config)
+  const savedMono = useRef(monoColor)
 
   function handleCancel() {
     Object.entries(savedConfig.current).forEach(([k, v]) => onChange(k, v))
     onMonoColorChange(savedMono.current)
     onClose()
+  }
+
+  function DeviceSelector({ config, onChange }) {
+    const [devices, setDevices] = useState([])
+
+    async function refresh() {
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return
+        const list = await navigator.mediaDevices.enumerateDevices()
+        setDevices(list.filter(d => d.kind === 'audioinput'))
+      } catch (e) {
+        console.warn('enumerateDevices failed', e)
+      }
+    }
+
+    useEffect(() => { refresh() }, [])
+
+    return (
+      <div className="space-y-3">
+        <div className="flex gap-3 items-center">
+          <select
+            value={config.audioDeviceId ?? ''}
+            onChange={e => onChange('audioDeviceId', e.target.value === '' ? null : e.target.value)}
+            className="appearance-none bg-surface border border-border hover:border-gray-500 focus:border-accent focus:outline-none rounded-lg pl-3 pr-7 py-1 text-sm text-gray-200 cursor-pointer transition-colors w-full"
+          >
+            <option value="">System default</option>
+            {devices.map((d, i) => (
+              <option key={d.deviceId || i} value={d.deviceId}>{d.label || `Microphone ${i + 1}`}</option>
+            ))}
+          </select>
+          <button onClick={refresh} className="px-3 py-1 rounded-lg border border-border text-sm text-gray-400">Refresh</button>
+        </div>
+        <div className="text-xs text-gray-600">If device labels are empty, grant microphone permission first and hit Refresh.</div>
+      </div>
+    )
   }
 
   return (
@@ -175,6 +210,14 @@ export default function Settings({ config, onChange, onClose, onReset, monoColor
               </div>
             </div>
           ))}
+
+          {/* Audio device selector */}
+          <div>
+            <h3 className="text-xs uppercase tracking-widest text-gray-500 mb-4 border-b border-border pb-2">
+              Microphone
+            </h3>
+            <DeviceSelector config={config} onChange={onChange} />
+          </div>
         </div>
 
       </div>
